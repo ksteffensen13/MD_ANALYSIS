@@ -1,0 +1,182 @@
+set mutant R312H
+
+
+#BASED ON THE BELOW COMMUNITY NUMBERS AND THE ORDER, CHANGE THE BELOW VARIABLES TO MATCH
+#FOR EXAMPLE, I SET COMMUNIT1 VARIABLE TO ALWAYS BE N-TERMINUS, BUT IT MAY BE COMMUNITY NUMBER 4 IN YOUR NETWORK ANALYSIS
+#SO YOU WOULD SET COMMUNITY1 VARIABLE TO BE VALUE 4
+#DETERMINE THIS BY OPENING COMMUNITY DATA, COLOURING ALL COMMUNITIES, AND SEEING WHAT COMMUNITY LOCATION CORRESPONDS TO WHAT NUMBER
+
+set community0 0
+set community1 7
+#set community2
+set community3 6
+set community4 1
+set community5 2
+set community6 11
+set community7 9
+set community8 5
+set community9 10
+#set community10
+#set community11
+set community12 3
+#set community13
+set community14 4
+set community15 8
+
+
+
+mol new /Users/karl/Desktop/Computational_Work/Mutant_Gactin/F-actin/ANALYSES/${mutant}/COMBINED/NETWORK_ANALYSIS/${mutant}_C.psf
+#load dcd into molecule 0
+mol addfile /Users/karl/Desktop/Computational_Work/Mutant_Gactin/F-actin/ANALYSES/${mutant}/COMBINED/NETWORK_ANALYSIS/${mutant}_Factin_C_protein_COMBINED.dcd type dcd waitfor all 0
+color Chain X cyan
+color Segname XP1 purple
+axes location off
+mol modstyle 0 top NewRibbons
+mol modcolor 0 0 chain
+mol addrep 0
+#for representation index 1 (the 2nd, since index starts at 0) of molecule index 0, select residue
+mol modselect 1 0 "residue 312"
+mol modstyle 1 0 Licorice
+mol modcolor 1 0 segname
+set folder_path "/Users/karl/Desktop/Computational_Work/Mutant_Gactin/F-actin/ANALYSES/${mutant}/COMBINED/NETWORK_ANALYSIS/"
+::NetworkView::networkView 0 ${folder_path}contact.dat
+::NetworkView::readCommunityFile ${folder_path}communities.out
+::NetworkView::activateCommunities 0
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#0 N-terminus/SD1
+::NetworkView::activateCommunity ${community0} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community0} 0-blue
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#1 C-term
+::NetworkView::activateCommunity ${community1} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community1} 9-pink
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#2 H88 helix
+::NetworkView::activateCommunity ${community2} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community2} 6-silver
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#3 SD2
+::NetworkView::activateCommunity ${community3} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community3} 4-yellow
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#4 top of D-loop
+::NetworkView::activateCommunity ${community4} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community4} 15-iceblue
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#5 bottom of SD3
+::NetworkView::activateCommunity ${community5} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community5} 14-ochre
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#6 SD3/4 interface along nucleotide cleft
+::NetworkView::activateCommunity ${community6} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community6} 10-cyan
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#7 SD3/4 interface with R312
+::NetworkView::activateCommunity ${community7} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community7} 8-white
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#8 A230 helix
+::NetworkView::activateCommunity ${community8} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community8} 7-green
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#9 SD4
+::NetworkView::activateCommunity ${community9} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community9} 16-black
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#10 top of SD4
+::NetworkView::activateCommunity ${community10} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community10} 3-orange
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#11 N-terminus
+::NetworkView::activateCommunity ${community11} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community11} 12-lime
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#12 D-loop2
+::NetworkView::activateCommunity ${community12} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community12} 11-purple
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#13 top of D-loop3
+::NetworkView::activateCommunity ${community13} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community13} 13-mauve
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#14 front of SD4
+::NetworkView::activateCommunity ${community14} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community14} 2-gray
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+#15 target binding cleft
+::NetworkView::activateCommunity ${community15} 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCommunity ${community15} 5-tan
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+
+
+::NetworkView::activateCriticalNodes 1
+::NetworkView::drawNodes
+::NetworkView::drawEdges
+::NetworkView::colorCriticalNodes 1-red
+::NetworkView::drawNodes
+::NetworkView::drawEdges
