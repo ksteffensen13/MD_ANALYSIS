@@ -1,0 +1,71 @@
+module load vmd
+export PATH=$PATH:/home/ksteffen/NETWORK_ANALYSIS/network-tutorial/carma-2.01/bin/linux
+export PATH=$PATH:/home/ksteffen/NETWORK_ANALYSIS/network-tutorial/catdcd-4.0b/LINUXAMD64/bin/catdcd4.0
+
+
+
+#create script in network analysis folder containing the below
+source "/home/ksteffen/vmd-1.9.4a55/plugins/noarch/tcl/networkview1.41/adjacencyMatrix.tcl"
+source "/home/ksteffen/vmd-1.9.4a55/plugins/noarch/tcl/networkview1.41/communityNetwork.tcl"
+source "/home/ksteffen/vmd-1.9.4a55/plugins/noarch/tcl/networkview1.41/networkSetup.tcl"
+source "/home/ksteffen/vmd-1.9.4a55/plugins/noarch/tcl/networkview1.41/networkView.tcl"
+source "/home/ksteffen/vmd-1.9.4a55/plugins/noarch/tcl/networkview1.41/pkgIndex.tcl"
+source "/home/ksteffen/vmd-1.9.4a55/plugins/noarch/tcl/networkview1.41/suboptimalPaths.tcl"
+
+mol new WT_C.psf
+
+mol addfile WT_Factin_C_protein_COMBINED.dcd type dcd waitfor all
+
+::NetworkView::networkView 0 contact.dat
+
+set R312 [::NetworkView::getNodesFromSelection "chain X and resid 312 and name CA"]
+set P333 [::NetworkView::getNodesFromSelection "chain X and resid 333 and name CA"]
+set K326 [::NetworkView::getNodesFromSelection "chain X and resid 326 and name CA"]
+set K328 [::NetworkView::getNodesFromSelection "chain X and resid 328 and name CA"]
+set D292 [::NetworkView::getNodesFromSelection "chain X and resid 292 and name CA"]
+set R147 [::NetworkView::getNodesFromSelection "chain X and resid 147 and name CA"]
+set E334 [::NetworkView::getNodesFromSelection "chain X and resid 334 and name CA"]
+set E167 [::NetworkView::getNodesFromSelection "chain X and resid 167 and name CA"]
+set M305 [::NetworkView::getNodesFromSelection "chain X and resid 305 and name CA"]
+set G46 [::NetworkView::getNodesFromSelection "chain X and resid 46 and name CA"]
+set M47 [::NetworkView::getNodesFromSelection "chain X and resid 47 and name CA"]
+set G48 [::NetworkView::getNodesFromSelection "chain X and resid 48 and name CA"]
+set S60 [::NetworkView::getNodesFromSelection "chain X and resid 60 and name CA"]
+set G55 [::NetworkView::getNodesFromSelection "chain X and resid 55 and name CA"]
+set D157 [::NetworkView::getNodesFromSelection "chain X and resid 157 and name CA"]
+set E270 [::NetworkView::getNodesFromSelection "chain X and resid 270 and name CA"]
+set R28 [::NetworkView::getNodesFromSelection "chain X and resid 28 and name CA"]
+set D25 [::NetworkView::getNodesFromSelection "chain X and resid 25 and name CA"]
+set M44 [::NetworkView::getNodesFromSelection "chain X and resid 44 and name CA"]
+set V43 [::NetworkView::getNodesFromSelection "chain X and resid 43 and name CA"]
+
+./subopt contact.dat R312-P333_subopt 20 $R312 $P333
+./subopt contact.dat R312-K326_subopt 20 $R312 $K326
+./subopt contact.dat R312-K328_subopt 20 $R312 $K328
+./subopt contact.dat R312-D292_subopt 20 $D292 $R312
+./subopt contact.dat R312-R147_subopt 20 $R147 $R312
+./subopt contact.dat R312-E334_subopt 20 $R312 $E334
+./subopt contact.dat R312-D25_subopt 20 $D25 $R312
+./subopt contact.dat R312-R28_subopt 20 $R28 $R312
+./subopt contact.dat R312-E167_subopt 20 $E167 $R312
+./subopt contact.dat R312-M305_subopt 20 $M305 $R312
+./subopt contact.dat R312-G46_subopt 20 $G46 $R312
+./subopt contact.dat R312-M47_subopt 20 $M47 $R312
+./subopt contact.dat R312-G48_subopt 20 $G48 $R312
+./subopt contact.dat R312-S60_subopt 20 $S60 $R312
+./subopt contact.dat R312-G55_subopt 20 $G55 $R312
+./subopt contact.dat R312-D157_subopt 20 $D157 $R312
+./subopt contact.dat R312-E270_subopt 20 $E270 $R312
+./subopt contact.dat R312-V43_subopt 20 $V43 $R312
+./subopt contact.dat R312-M44_subopt 20 $M44 $R312
+./subopt contact.dat V43-R28_subopt 20 $R28 $V43
+./subopt contact.dat V43-D25_subopt 20 $D25 $V43
+./subopt contact.dat M44-R28_subopt 20 $R28 $M44
+./subopt contact.dat M44-D25_subopt 20 $D25 $M44
+./subopt contact.dat G46-R28_subopt 20 $R28 $G46
+./subopt contact.dat G46-D25_subopt 20 $D25 $G46
+./subopt contact.dat M47-R28_subopt 20 $R28 $M47
+./subopt contact.dat M47-D25_subopt 20 $D25 $M47
+
+#run script with this command to generate network analysis
+vmd -dispdev text -e suboptimal.tcl
