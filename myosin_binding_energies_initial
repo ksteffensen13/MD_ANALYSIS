@@ -1,0 +1,310 @@
+#!/bin/bash
+#SBATCH --time=0-12:00:00  # D-HH:MM:SS
+#SBATCH --account=def-jfdawson
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=0  #mem per node
+#SBATCH --output=myosin_binding_energies_3A.out
+#SBATCH --job-name=myosin_binding_energies_3A
+#SBATCH --mail-user=ksteffen@uoguelph.ca
+#SBATCH --mail-type=FAIL
+#SBATCH --mail-type=ALL
+
+
+#set GROMACS to be our custom install
+
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+
+
+protein='Myosin'
+directory_path="/home/ksteffen/scratch/MUTANT_FILAMENTS/FOR_R312_PAPER/BINDING_ENERGIES"
+#location of script pymol_axes.py
+path_for_scripts="/home/ksteffen/scratch/MUTANT_FILAMENTS/FOR_R312_PAPER/BINDING_ENERGIES/scripts/"
+path_for_axes_scripts="/home/ksteffen/scratch/MUTANT_FILAMENTS/FOR_R312_PAPER/BINDING_ENERGIES/scripts/pymol_axes.py"
+path_for_parameter_files="/home/ksteffen/scratch/MUTANT_FILAMENTS/FOR_R312_PAPER/BINDING_ENERGIES/parameter_files/"
+
+state='OPEN'
+state2='open'
+mutants=("WT" "R312C" "R312H")
+
+initial_file_path=""$directory_path"/"$state"/"$protein"/"
+
+cd "$initial_file_path"
+
+
+mkdir MINIMIZATION_3A
+mkdir MINIMIZATION_2.5A
+mkdir MINIMIZATION_2A
+mkdir MINIMIZATION_1.5A
+mkdir MINIMIZATION_1A
+mkdir MINIMIZATION_0.5A
+mkdir MINIMIZATION_0A
+mkdir MINIMIZATION_FINAL
+
+
+
+
+
+
+cd MINIMIZATION_3A
+
+for mutant in "${mutants[@]}"; do
+  
+  path_for_output=""$initial_file_path"/MINIMIZATION_3A/"
+  module purge
+  module load StdEnv/2020 python/3.10
+
+  python "$path_for_scripts""$protein"_initial_distance.py "$mutant" "$initial_file_path" "$path_for_output" "$path_for_axes_scripts" "$state2"
+
+  #load modules
+  module purge
+  module load StdEnv/2023 gcc/12.3 openmpi/4.1.5 gromacs/2024.1 python/3.10
+  export GMXLIB=/home/ksteffen/gromacs-2021.5/share/top
+  for i in {1..5}; do
+    pdb_filename=DOCKING_3.0A_"$mutant""$i"_"$state2"
+    gmx_d pdb2gmx -f "$pdb_filename".pdb -o "$pdb_filename"_processed.gro -p "$pdb_filename"_topol.top -i "$pdb_filename"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh
+    gmx_d editconf -f "$pdb_filename"_processed.gro -o "$pdb_filename"_newbox.gro -c -d 1.0 -bt dodecahedron
+    gmx_d grompp -f "$path_for_parameter_files"minim_sd.mdp -c "$pdb_filename"_newbox.gro -p "$pdb_filename"_topol.top -o "$pdb_filename"_em.tpr -maxwarn 3
+    gmx mdrun -s "$pdb_filename"_em.tpr -deffnm "$pdb_filename"_em -c "$pdb_filename"_em.pdb
+
+    gmx select -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -on "$pdb_filename"_em.ndx -select "(group protein) or (resname ADP) or (resname MG) or (resname PO4)"
+    echo -e 'name 0 Protein_ADP_MG_PO4\n q' | gmx make_ndx -f "$pdb_filename"_em.pdb -n "$pdb_filename"_em.ndx -o "$pdb_filename"_em.ndx
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    echo -e 'Protein_ADP_MG_PO4\n q' | gmx trjconv -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o MINIMIZED1_SD_"$pdb_filename".pdb -pbc whole
+    #center it and make it look good
+    echo -e 'Protein_ADP_MG_PO4\n Protein_ADP_MG_PO4\n q' | gmx trjconv -f MINIMIZED1_SD_"$pdb_filename".pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o "$pdb_filename"_MINIMIZED_SD.pdb -center -pbc nojump
+  done
+done
+
+
+
+
+
+
+for mutant in "${mutants[@]}"; do
+
+  path_for_output=""$initial_file_path"/MINIMIZATION_2.5A/"
+  cd "$path_for_output"
+
+  initial_distance=3.0
+  docking_distance=2.5
+  module purge
+  module load StdEnv/2020 python/3.10
+
+  previous_structure=""$initial_file_path"/MINIMIZATION_3A/"
+  python "$path_for_scripts""$protein"_docking.py "$mutant" "$previous_structure" "$path_for_output" "$path_for_axes_scripts" "$state2" "$initial_distance" "$docking_distance"
+
+  #load modules
+  module purge
+  module load StdEnv/2023 gcc/12.3 openmpi/4.1.5 gromacs/2024.1
+  export GMXLIB=/home/ksteffen/gromacs-2021.5/share/top
+  for i in {1..5}; do
+    pdb_filename=DOCKING_2.5A_"$mutant""$i"_"$state2"
+    gmx_d pdb2gmx -f "$pdb_filename".pdb -o "$pdb_filename"_processed.gro -p "$pdb_filename"_topol.top -i "$pdb_filename"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh
+    gmx_d editconf -f "$pdb_filename"_processed.gro -o "$pdb_filename"_newbox.gro -c -d 1.0 -bt dodecahedron
+    gmx_d grompp -f "$path_for_parameter_files"minim_sd.mdp -c "$pdb_filename"_newbox.gro -p "$pdb_filename"_topol.top -o "$pdb_filename"_em.tpr -maxwarn 3
+    gmx mdrun -s "$pdb_filename"_em.tpr -deffnm "$pdb_filename"_em -c "$pdb_filename"_em.pdb
+
+    gmx select -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -on "$pdb_filename"_em.ndx -select "(group protein) or (resname ADP) or (resname MG) or (resname PO4)"
+    echo -e 'name 0 Protein_ADP_MG_PO4\n q' | gmx make_ndx -f "$pdb_filename"_em.pdb -n "$pdb_filename"_em.ndx -o "$pdb_filename"_em.ndx
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    echo -e 'Protein_ADP_MG_PO4\n q' | gmx trjconv -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o MINIMIZED1_SD_"$pdb_filename".pdb -pbc whole
+    #center it and make it look good
+    echo -e 'Protein_ADP_MG_PO4\n Protein_ADP_MG_PO4\n q' | gmx trjconv -f MINIMIZED1_SD_"$pdb_filename".pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o "$pdb_filename"_MINIMIZED_SD.pdb -center -pbc nojump
+  done
+done
+
+
+
+
+
+for mutant in "${mutants[@]}"; do
+
+  path_for_output=""$initial_file_path"/MINIMIZATION_2A/"
+  cd "$path_for_output"
+
+  initial_distance=2.5
+  docking_distance=2.0
+  module purge
+  module load StdEnv/2020 python/3.10
+
+  previous_structure=""$initial_file_path"/MINIMIZATION_2.5A/"
+  python "$path_for_scripts""$protein"_docking.py "$mutant" "$previous_structure" "$path_for_output" "$path_for_axes_scripts" "$state2" "$initial_distance" "$docking_distance"
+
+  #load modules
+  module purge
+  module load StdEnv/2023 gcc/12.3 openmpi/4.1.5 gromacs/2024.1
+  export GMXLIB=/home/ksteffen/gromacs-2021.5/share/top
+
+  for i in {1..5}; do
+    pdb_filename=DOCKING_2.0A_"$mutant""$i"_"$state2"
+    gmx_d pdb2gmx -f "$pdb_filename".pdb -o "$pdb_filename"_processed.gro -p "$pdb_filename"_topol.top -i "$pdb_filename"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh
+    gmx_d editconf -f "$pdb_filename"_processed.gro -o "$pdb_filename"_newbox.gro -c -d 1.0 -bt dodecahedron
+    gmx_d grompp -f "$path_for_parameter_files"minim_sd.mdp -c "$pdb_filename"_newbox.gro -p "$pdb_filename"_topol.top -o "$pdb_filename"_em.tpr -maxwarn 3
+    gmx mdrun -s "$pdb_filename"_em.tpr -deffnm "$pdb_filename"_em -c "$pdb_filename"_em.pdb
+
+    gmx select -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -on "$pdb_filename"_em.ndx -select "(group protein) or (resname ADP) or (resname MG) or (resname PO4)"
+    echo -e 'name 0 Protein_ADP_MG_PO4\n q' | gmx make_ndx -f "$pdb_filename"_em.pdb -n "$pdb_filename"_em.ndx -o "$pdb_filename"_em.ndx
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    echo -e 'Protein_ADP_MG_PO4\n q' | gmx trjconv -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o MINIMIZED1_SD_"$pdb_filename".pdb -pbc whole
+    #center it and make it look good
+    echo -e 'Protein_ADP_MG_PO4\n Protein_ADP_MG_PO4\n q' | gmx trjconv -f MINIMIZED1_SD_"$pdb_filename".pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o "$pdb_filename"_MINIMIZED_SD.pdb -center -pbc nojump
+  done
+done
+
+
+
+for mutant in "${mutants[@]}"; do
+
+  path_for_output=""$initial_file_path"/MINIMIZATION_1.5A/"
+  cd "$path_for_output"
+
+  initial_distance=2.0
+  docking_distance=1.5
+  module purge
+  module load StdEnv/2020 python/3.10
+
+  previous_structure=""$initial_file_path"/MINIMIZATION_2A/"
+  python "$path_for_scripts""$protein"_docking.py "$mutant" "$previous_structure" "$path_for_output" "$path_for_axes_scripts" "$state2" "$initial_distance" "$docking_distance"
+  #load modules
+  module purge
+  module load StdEnv/2023 gcc/12.3 openmpi/4.1.5 gromacs/2024.1
+  export GMXLIB=/home/ksteffen/gromacs-2021.5/share/top
+  for i in {1..5}; do
+    pdb_filename=DOCKING_1.5A_"$mutant""$i"_"$state2"
+    gmx_d pdb2gmx -f "$pdb_filename".pdb -o "$pdb_filename"_processed.gro -p "$pdb_filename"_topol.top -i "$pdb_filename"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh
+    gmx_d editconf -f "$pdb_filename"_processed.gro -o "$pdb_filename"_newbox.gro -c -d 1.0 -bt dodecahedron
+    gmx_d grompp -f "$path_for_parameter_files"minim_sd.mdp -c "$pdb_filename"_newbox.gro -p "$pdb_filename"_topol.top -o "$pdb_filename"_em.tpr -maxwarn 3
+    gmx mdrun -s "$pdb_filename"_em.tpr -deffnm "$pdb_filename"_em -c "$pdb_filename"_em.pdb
+
+    gmx select -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -on "$pdb_filename"_em.ndx -select "(group protein) or (resname ADP) or (resname MG) or (resname PO4)"
+    echo -e 'name 0 Protein_ADP_MG_PO4\n q' | gmx make_ndx -f "$pdb_filename"_em.pdb -n "$pdb_filename"_em.ndx -o "$pdb_filename"_em.ndx
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    echo -e 'Protein_ADP_MG_PO4\n q' | gmx trjconv -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o MINIMIZED1_SD_"$pdb_filename".pdb -pbc whole
+    #center it and make it look good
+    echo -e 'Protein_ADP_MG_PO4\n Protein_ADP_MG_PO4\n q' | gmx trjconv -f MINIMIZED1_SD_"$pdb_filename".pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o "$pdb_filename"_MINIMIZED_SD.pdb -center -pbc nojump
+  done
+done
+
+
+
+
+for mutant in "${mutants[@]}"; do
+
+  path_for_output=""$initial_file_path"/MINIMIZATION_1A/"
+  cd "$path_for_output"
+
+  initial_distance=1.5
+  docking_distance=1.0
+  module purge
+  module load StdEnv/2020 python/3.10
+
+  previous_structure=""$initial_file_path"/MINIMIZATION_1.5A/"
+  python "$path_for_scripts""$protein"_docking.py "$mutant" "$previous_structure" "$path_for_output" "$path_for_axes_scripts" "$state2" "$initial_distance" "$docking_distance"
+
+  #load modules
+  module purge
+  module load StdEnv/2023 gcc/12.3 openmpi/4.1.5 gromacs/2024.1
+  export GMXLIB=/home/ksteffen/gromacs-2021.5/share/top
+  for i in {1..5}; do
+    pdb_filename=DOCKING_1.0A_"$mutant""$i"_"$state2"
+    gmx_d pdb2gmx -f "$pdb_filename".pdb -o "$pdb_filename"_processed.gro -p "$pdb_filename"_topol.top -i "$pdb_filename"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh
+    gmx_d editconf -f "$pdb_filename"_processed.gro -o "$pdb_filename"_newbox.gro -c -d 1.0 -bt dodecahedron
+    gmx_d grompp -f "$path_for_parameter_files"minim_sd.mdp -c "$pdb_filename"_newbox.gro -p "$pdb_filename"_topol.top -o "$pdb_filename"_em.tpr -maxwarn 3
+    gmx mdrun -s "$pdb_filename"_em.tpr -deffnm "$pdb_filename"_em -c "$pdb_filename"_em.pdb
+
+    gmx select -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -on "$pdb_filename"_em.ndx -select "(group protein) or (resname ADP) or (resname MG) or (resname PO4)"
+    echo -e 'name 0 Protein_ADP_MG_PO4\n q' | gmx make_ndx -f "$pdb_filename"_em.pdb -n "$pdb_filename"_em.ndx -o "$pdb_filename"_em.ndx
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    echo -e 'Protein_ADP_MG_PO4\n q' | gmx trjconv -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o MINIMIZED1_SD_"$pdb_filename".pdb -pbc whole
+    #center it and make it look good
+    echo -e 'Protein_ADP_MG_PO4\n Protein_ADP_MG_PO4\n q' | gmx trjconv -f MINIMIZED1_SD_"$pdb_filename".pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o "$pdb_filename"_MINIMIZED_SD.pdb -center -pbc nojump
+  done
+done
+
+
+
+for mutant in "${mutants[@]}"; do
+
+  path_for_output=""$initial_file_path"/MINIMIZATION_0.5A/"
+  cd "$path_for_output"
+
+  initial_distance=1.0
+  docking_distance=0.5
+  module purge
+  module load StdEnv/2020 python/3.10
+
+  previous_structure=""$initial_file_path"/MINIMIZATION_1A/"
+  python "$path_for_scripts""$protein"_docking.py "$mutant" "$previous_structure" "$path_for_output" "$path_for_axes_scripts" "$state2" "$initial_distance" "$docking_distance"
+
+  #load modules
+  module purge
+  module load StdEnv/2023 gcc/12.3 openmpi/4.1.5 gromacs/2024.1
+  export GMXLIB=/home/ksteffen/gromacs-2021.5/share/top
+  for i in {1..5}; do
+    pdb_filename=DOCKING_0.5A_"$mutant""$i"_"$state2"
+    gmx_d pdb2gmx -f "$pdb_filename".pdb -o "$pdb_filename"_processed.gro -p "$pdb_filename"_topol.top -i "$pdb_filename"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh
+    gmx_d editconf -f "$pdb_filename"_processed.gro -o "$pdb_filename"_newbox.gro -c -d 1.0 -bt dodecahedron
+    gmx_d grompp -f "$path_for_parameter_files"minim_sd.mdp -c "$pdb_filename"_newbox.gro -p "$pdb_filename"_topol.top -o "$pdb_filename"_em.tpr -maxwarn 3
+    gmx mdrun -s "$pdb_filename"_em.tpr -deffnm "$pdb_filename"_em -c "$pdb_filename"_em.pdb
+
+    gmx select -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -on "$pdb_filename"_em.ndx -select "(group protein) or (resname ADP) or (resname MG) or (resname PO4)"
+    echo -e 'name 0 Protein_ADP_MG_PO4\n q' | gmx make_ndx -f "$pdb_filename"_em.pdb -n "$pdb_filename"_em.ndx -o "$pdb_filename"_em.ndx
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    echo -e 'Protein_ADP_MG_PO4\n q' | gmx trjconv -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o MINIMIZED1_SD_"$pdb_filename".pdb -pbc whole
+    #center it and make it look good
+    echo -e 'Protein_ADP_MG_PO4\n Protein_ADP_MG_PO4\n q' | gmx trjconv -f MINIMIZED1_SD_"$pdb_filename".pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o "$pdb_filename"_MINIMIZED_SD.pdb -center -pbc nojump
+  done
+done
+
+
+
+
+
+for mutant in "${mutants[@]}"; do
+
+  path_for_output=""$initial_file_path"/MINIMIZATION_0A/"
+  cd "$path_for_output"
+
+  initial_distance=0.5
+  docking_distance=0.0
+  module purge
+  module load StdEnv/2020 python/3.10
+
+  previous_structure=""$initial_file_path"/MINIMIZATION_0.5A/"
+  python "$path_for_scripts""$protein"_docking.py "$mutant" "$previous_structure" "$path_for_output" "$path_for_axes_scripts" "$state2" "$initial_distance" "$docking_distance"
+
+  #load modules
+  module purge
+  module load StdEnv/2023 gcc/12.3 openmpi/4.1.5 gromacs/2024.1
+  export GMXLIB=/home/ksteffen/gromacs-2021.5/share/top
+  for i in {1..5}; do
+    pdb_filename=DOCKING_0.0A_"$mutant""$i"_"$state2"
+    gmx_d pdb2gmx -f "$pdb_filename".pdb -o "$pdb_filename"_processed.gro -p "$pdb_filename"_topol.top -i "$pdb_filename"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh
+    gmx_d editconf -f "$pdb_filename"_processed.gro -o "$pdb_filename"_newbox.gro -c -d 1.0 -bt dodecahedron
+    gmx_d grompp -f "$path_for_parameter_files"minim_sd.mdp -c "$pdb_filename"_newbox.gro -p "$pdb_filename"_topol.top -o "$pdb_filename"_em.tpr -maxwarn 3
+    gmx mdrun -s "$pdb_filename"_em.tpr -deffnm "$pdb_filename"_em -c "$pdb_filename"_em.pdb
+
+    gmx select -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -on "$pdb_filename"_em.ndx -select "(group protein) or (resname ADP) or (resname MG) or (resname PO4)"
+    echo -e 'name 0 Protein_ADP_MG_PO4\n q' | gmx make_ndx -f "$pdb_filename"_em.pdb -n "$pdb_filename"_em.ndx -o "$pdb_filename"_em.ndx
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    echo -e 'Protein_ADP_MG_PO4\n q' | gmx trjconv -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o MINIMIZED1_SD_"$pdb_filename".pdb -pbc whole
+    #center it and make it look good
+    echo -e 'Protein_ADP_MG_PO4\n Protein_ADP_MG_PO4\n q' | gmx trjconv -f MINIMIZED1_SD_"$pdb_filename".pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o "$pdb_filename"_MINIMIZED_SD.pdb -center -pbc nojump
+  done
+done
+
+
+
+
+
+
+
