@@ -1,0 +1,117 @@
+#in network analysis folder, download suboptimal files
+#remove any that are empty because there are no paths (file size=0)
+#run script with vmd -dispdev text -e make_suboptimal_paths.tcl
+#load output .vmd files with vmd -e file_name.vmd
+
+set mutant WT
+
+source "/Applications/VMD\ 1.9.4a55-x86_64-Rev11.app/Contents/vmd/plugins/noarch/tcl/networkview1.41/adjacencyMatrix.tcl"
+source "/Applications/VMD\ 1.9.4a55-x86_64-Rev11.app/Contents/vmd/plugins/noarch/tcl/networkview1.41/communityNetwork.tcl"
+source "/Applications/VMD\ 1.9.4a55-x86_64-Rev11.app/Contents/vmd/plugins/noarch/tcl/networkview1.41/networkSetup.tcl"
+source "/Applications/VMD\ 1.9.4a55-x86_64-Rev11.app/Contents/vmd/plugins/noarch/tcl/networkview1.41/networkView.tcl"
+source "/Applications/VMD\ 1.9.4a55-x86_64-Rev11.app/Contents/vmd/plugins/noarch/tcl/networkview1.41/pkgIndex.tcl"
+source "/Applications/VMD\ 1.9.4a55-x86_64-Rev11.app/Contents/vmd/plugins/noarch/tcl/networkview1.41/suboptimalPaths.tcl"
+
+color Display Background white
+
+set target_residues {
+  "R312"
+  "V43"
+  "M44"
+  "G46"
+  "M47"
+}
+
+set source_residues {
+  "P333"
+  "K326"
+  "K328"
+  "D292"
+  "R147"
+  "E334"
+  "D25"
+  "R28"
+  "E167"
+  "M305"
+  "G46"
+  "M47"
+  "G48"
+  "S60"
+  "G55"
+  "D157"
+  "E270"
+  "V43"
+  "M44"
+}
+
+
+mol new /Users/karl/Desktop/Computational_Work/Mutant_Gactin/F-actin/ANALYSES/${mutant}/COMBINED/NETWORK_ANALYSIS/${mutant}_C.psf
+#load dcd into molecule 0
+mol addfile /Users/karl/Desktop/Computational_Work/Mutant_Gactin/F-actin/ANALYSES/${mutant}/COMBINED/NETWORK_ANALYSIS/${mutant}_Factin_C_protein_COMBINED.dcd type dcd waitfor all 0
+color Chain X cyan
+color Segname XP1 purple
+axes location off
+mol modstyle 0 top NewRibbons
+mol modcolor 0 0 chain
+mol addrep 0
+#for representation index 1 (the 2nd, since index starts at 0) of molecule index 0, select residue
+mol modselect 1 0 "residue 311"
+mol modstyle 1 0 Licorice
+mol modcolor 1 0 segname
+set folder_path "/Users/karl/Desktop/Computational_Work/Mutant_Gactin/F-actin/ANALYSES/${mutant}/COMBINED/NETWORK_ANALYSIS/"
+::NetworkView::networkView 0 ${folder_path}contact.dat
+::NetworkView::readCommunityFile ${folder_path}communities.out
+save_state /Users/karl/Desktop/Computational_Work/Mutant_Gactin/F-actin/ANALYSES/${mutant}_network.vmd
+
+#to deactivate all nodes
+::NetworkView::activateNodeSelection all 0
+#found these by looking at source scripts and the available commands
+::NetworkView::drawNetwork
+::NetworkView::activateEdgeSelection all 0
+::NetworkView::drawEdges
+
+foreach target $target_residues {
+      if {[regexp {(\d+)$} $target match target_number]} {
+        set target_number_subtracted [expr {$target_number - 1}]
+      }
+    foreach source $source_residues {
+      set filepath "/Users/karl/Desktop/Computational_Work/Mutant_Gactin/F-actin/ANALYSES/${mutant}/COMBINED/NETWORK_ANALYSIS/${target}-${source}_subopt.out"
+      if {[catch {::NetworkView::readSuboptimalPathFile $filepath} error]} {
+            continue ;# Skip to the next iteration of the loop
+        }
+      if {[regexp {(\d+)$} $source match source_number]} {
+        set source_number_subtracted [expr {$source_number - 1}]
+        if {$source_number_subtracted < $target_number_subtracted} {
+            ::NetworkView::activateSuboptimalPaths ${source_number_subtracted} ${target_number_subtracted} 1
+            ::NetworkView::drawNodes
+            ::NetworkView::drawEdges
+            ::NetworkView::colorSuboptimalPath ${source_number_subtracted} ${target_number_subtracted} 0 1-red
+            ::NetworkView::drawNodes
+            ::NetworkView::drawEdges
+            save_state /Users/karl/Desktop/Computational_Work/Mutant_Gactin/F-actin/ANALYSES/${mutant}_subopt_${target}-${source}.vmd
+            ::NetworkView::colorSuboptimalPath ${source_number_subtracted} ${target_number_subtracted} 0 0-blue
+            ::NetworkView::drawNodes
+            ::NetworkView::drawEdges
+            ::NetworkView::activateSuboptimalPaths ${source_number_subtracted} ${target_number_subtracted} 0
+            ::NetworkView::drawNodes
+            ::NetworkView::drawEdges
+            } elseif {$target_number_subtracted < $source_number_subtracted} {
+                ::NetworkView::activateSuboptimalPaths ${target_number_subtracted} ${source_number_subtracted} 1
+                ::NetworkView::drawNodes
+                ::NetworkView::drawEdges
+                ::NetworkView::colorSuboptimalPath ${target_number_subtracted} ${source_number_subtracted} 0 1-red
+                ::NetworkView::drawNodes
+                ::NetworkView::drawEdges
+                save_state /Users/karl/Desktop/Computational_Work/Mutant_Gactin/F-actin/ANALYSES/${mutant}_subopt_${target}-${source}.vmd
+                ::NetworkView::colorSuboptimalPath ${target_number_subtracted} ${source_number_subtracted} 0 0-blue
+                ::NetworkView::drawNodes
+                ::NetworkView::drawEdges
+                ::NetworkView::activateSuboptimalPaths ${target_number_subtracted} ${source_number_subtracted} 0
+                ::NetworkView::drawNodes
+                ::NetworkView::drawEdges
+            }
+
+      }
+    }
+}
+
