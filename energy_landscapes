@@ -1,0 +1,1021 @@
+#!/bin/bash
+
+
+#####################################################MANUAL ENTRY#####################################################
+#directory path is the path to folder containing all of your mutants if grouped together
+directory_path="/home/ksteffen/scratch/MUTANT_FILAMENTS/"
+mutant="WT"
+Factin_or_Gactin="Factin"
+reference_structure="7UTL"
+path_for_reference_structure="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/REFERENCE_STRUCTURES/"
+chains_to_delete="e+f+W+X+b+Z+d+a+U+Y+V+c+g+h"
+tpm_chains="i+j"
+#separate out translations by TPM state/reference structure
+output_path="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/"$mutant"/"$reference_structure"/"
+#location of script pymol_axes.py
+path_for_pymol_axes_script="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/TRANSLATION_SCRIPTS/pymol_axes.py"
+#location of script rotation_axes.py
+path_for_rotation_axes_script="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/TRANSLATION_SCRIPTS/rotation_axes.py"
+#path for tpm_translations.py AND tpm_docking.py
+path_for_structure_setup_scripts="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/TRANSLATION_SCRIPTS/"
+path_for_parameter_files="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/parameter_files/"
+#set as NEGATIVE the distance because the docking scripts will use the negative to move CLOSER to actin
+docking_increment=-0.5
+#the path where cluster structures were output from post_md analysis
+path_to_cluster_chain=""$directory_path""$mutant"/COMBINED/"
+#the total number of protomers in the filament (both strands combined)
+length_of_filament_to_build=16
+nucleotide_state='ADP-Pi'
+cation='MG'
+
+#####################################################MANUAL ENTRY#####################################################
+
+if [[ "$nucleotide_state" == "ADP-Pi" ]]; then
+  nucleotide='ADP'
+elif [[ "$nucleotide_state" == "ADP" ]]; then
+  nucleotide='ADP'
+else
+  nucleotide='ATP'
+fi
+
+if [[ "$reference_structure" == "7UTL" ]]; then
+  state='BLOCKED'
+  #Where does actin chain lettering start in reference structure? Used for building mutant filament
+  reference_starting_actin_chain='A'
+elif [[ "$reference_structure" == "7UTI" ]]; then
+  state='CLOSED'
+  reference_starting_actin_chain='C'
+elif [[ "$reference_structure" == "8EFI" ]]; then
+  state='OPEN'
+  reference_starting_actin_chain='C'
+fi
+
+
+
+mkdir "$output_path"
+
+for i in {1..5}; do
+  mkdir "$output_path""cluster$i"
+done
+
+
+#it's too computationally expensive to minimize all structures at each TPM coordinate/docking distance
+#using GNU parallel doesn't work well through all of my tests, and also was too slow
+#to get around these limitations, create separate scripts that minimize smaller groups of structures without too many resources requested per script
+#by submitting them all at the same time and using dependencies to run subsequent script (based on completion of previous scripts), we can get around this
+#now the only real problem becomes time spent in the queue and needing to manually submit jobs, but not requesting too many resources so the queue shouldn't be too long
+#while scripts will have to be submitted manually, they are still generated automatically
+
+#the below section will create submission scripts numbered 2-12 (with this current script being number 1)
+#Each of the submission scripts run sbatch on the minimization scripts (with dependencies built in)
+#Once THiS script is done, run the submission scripts one by one (sbatch script number 2, when that's done sbatch #3 etc.)
+
+
+#Using EOF to copy a block of text to a different file, creating the script, while calling functions from THIS script
+#note: EOF executes function calls. in the script creations below, need backslash before $(sbatch to stop it from executing, it will just copy and paste what is there
+#for example, if just include $(sbatch script.sh), EOF will run that command and it will try to start script.sh
+#IF however, we have \$(sbatch script.sh) in the EOF block, it will just copy "$(sbatch script.sh) to the file specified
+#the back slash stops that variable call from being executed
+#similarly, if we want a variable to be called within the EOF block, we don't add a backslash
+#For example, cd "/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/${mutant}/${reference_structure}/"
+#this will fill in ${mutant} and ${reference_structure} from the variables in THIS script, so it will copy over:
+#cd "/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/WT/7UTL/"
+#that way, we don't have to define those variables again in the script being made from the EOF block
+
+cd "/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/${mutant}/${reference_structure}/"
+
+#################################################MAKE SCRIPT FOR BASE FILAMENT MINIMIZATION AND ADDING TPM############
+
+filament_minimization_script_content=$(cat <<EOF
+#!/bin/bash
+#SBATCH --time=0-03:00:00  # D-HH:MM:SS
+#SBATCH --account=rrg-jfdawson
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=0  #mem per node
+#SBATCH --output=tpm_landscapes.out
+#SBATCH --job-name=tpm_landscapes
+#SBATCH --mail-user=ksteffen@uoguelph.ca
+#SBATCH --mail-type=FAIL
+#SBATCH --mail-type=ALL
+#load modules
+module load StdEnv/2020 gcc/9.3.0 cuda/11.0 openmpi/4.0.3 gromacs/2021.2 python/3.10
+#set GROMACS to be our custom install
+export GMXLIB=/home/ksteffen/gromacs-2021.5/share/top
+export OMP_NUM_THREADS="\${SLURM_CPUS_PER_TASK:-1}"
+
+
+#set variables from the master script variables
+directory_path="$directory_path"
+mutant="$mutant"
+Factin_or_Gactin="$Factin_or_Gactin"
+reference_structure="$reference_structure"
+path_for_reference_structure="$path_for_reference_structure"
+chains_to_delete="$chains_to_delete"
+tpm_chains="$tpm_chains"
+#separate out translations by TPM state/reference structure
+output_path="$output_path"
+#location of script pymol_axes.py
+path_for_pymol_axes_script="$path_for_pymol_axes_script"
+#location of script rotation_axes.py
+path_for_rotation_axes_script="$path_for_rotation_axes_script"
+#path for tpm_translations.py AND tpm_docking.py
+path_for_structure_setup_scripts="$path_for_structure_setup_scripts"
+path_for_parameter_files="$path_for_parameter_files"
+#set as NEGATIVE the distance because the docking scripts will use the negative to move CLOSER to actin
+docking_increment=$docking_increment
+#the path where cluster structures were output from post_md analysis
+path_to_cluster_chain="$path_to_cluster_chain"
+#the total number of protomers in the filament (both strands combined)
+length_of_filament_to_build=$length_of_filament_to_build
+#Where does actin chain lettering start in reference structure? Used for building mutant filament
+reference_starting_actin_chain="$reference_starting_actin_chain"
+state="$state"
+nucleotide_state="$nucleotide_state"
+cation="$cation"
+
+if [[ "\$nucleotide_state" == "ADP-Pi" ]]; then
+  nucleotide='ADP'
+elif [[ "\$nucleotide_state" == "ADP" ]]; then
+  nucleotide='ADP'
+else
+  nucleotide='ATP'
+fi
+
+#load pymol
+virtualenv --no-download \$SLURM_TMPDIR/env
+source \$SLURM_TMPDIR/env/bin/activate
+pip install pymol --no-index
+pip install numpy --no-index
+
+#FIRST, WE NEED TO CREATE OUR BASE STRUCTURE THEN MINIMIZE IT BEFORE ADDING TPM
+
+#first run python script to build starting structure in pymol
+python "\$path_for_structure_setup_scripts"initial_filament_structure_generation.py "\$mutant" "\$Factin_or_Gactin" "\$nucleotide_state" "\$cation" "\$reference_structure" "\$path_for_reference_structure" "\$chains_to_delete" "\$tpm_chains" "\$output_path" "\$path_for_pymol_axes_script" "\$path_to_cluster_chain" "\$length_of_filament_to_build" "\$reference_starting_actin_chain"
+
+
+for i in {1..5}; do
+  cluster_directory="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/\$mutant/\$reference_structure/cluster\$i/"
+  mkdir "\$cluster_directory"/MINIMIZED
+  mkdir "\$cluster_directory"/MINIMIZED/INITIAL_FILAMENT
+  mkdir "\$cluster_directory"/BASE_STRUCTURES
+done
+
+for i in {1..5}; do
+  cluster_directory="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/\$mutant/\$reference_structure/cluster\$i/"
+  pdb_filename="\${mutant}_base_filament_cluster\${i}"
+  cluster_file="\$cluster_directory""\$pdb_filename"
+  cluster_file_names="cluster_file_names.txt"
+  echo -e "\$cluster_file" >> "\$cluster_file_names"
+done
+
+
+parallel -j 5 "gmx pdb2gmx -f {1}.pdb -o {1}_processed.gro -p {1}_topol.top -i {1}_posre.itp -ff charmm36-jul2021 -water tip3p -ignh" :::: ./cluster_file_names.txt
+
+#define box around protein
+parallel -j 5 "gmx editconf -f {1}_processed.gro -o {1}_newbox.gro -c -d 1.0 -bt dodecahedron" :::: ./cluster_file_names.txt
+
+#solvate box
+#parallel -j 5 "gmx solvate -cp {1}_newbox.gro -cs spc216.gro -o {1}_solv.gro -p {1}_topol.top" :::: ./cluster_file_names.txt
+
+#Add ions to the system
+#parallel -j 5 "gmx grompp -f "\$path_for_parameter_files"ions_sd.mdp -c {1}_solv.gro -p {1}_topol.top -o {1}_ions.tpr -maxwarn 3" :::: ./cluster_file_names.txt
+
+#parallel -j 5 "echo SOL | gmx genion -s {1}_ions.tpr -o {1}_ions.gro -p {1}_topol.top -pname NA -nname CL -neutral" :::: ./cluster_file_names.txt
+
+#send to gromacs preprocessor using new minimization parameter file
+parallel -j 5 "gmx grompp -f "\$path_for_parameter_files"minim_sd.mdp -c {1}_newbox.gro -p {1}_topol.top -o {1}_em.tpr -maxwarn 3" :::: ./cluster_file_names.txt
+#-c flag outputs structure from the LAST step (aka minimized)
+
+for i in {1..5}; do
+  cluster_directory="\${output_path}cluster\$i/"
+  cd "\$cluster_directory"
+  pdb_filename="\${mutant}_base_filament_cluster\${i}"
+  gmx mdrun -s "\$pdb_filename"_em.tpr -deffnm "\$pdb_filename"_em -c "\$pdb_filename"_em.pdb
+
+  #check if it converged
+  if grep -q "Energy minimization has stopped, but the forces have not converged" "$pdb_filename"_em.log; then
+    #if it didn't converge, process trajectory and re-run minimization with CG
+    if [[ "\$nucleotide_state" == "ADP-Pi" ]]; then
+      #use gmx select to create an index file with just the protein/nucleotide/cation. Do this because gmx make_ndx doesn't allow automated sleection of something if it's in multiple groups
+      #for example, 'ADP' is listed twice with make_ndx, so need to specify the NUMBER not "ADP" with make_ndx. Here, can specify the NAME.
+      gmx select -f "\$pdb_filename"_em.pdb -s "\$pdb_filename"_em.tpr -on "\$pdb_filename"_em.ndx -select "(group protein) or (resname ADP) or (resname MG) or (resname PO4)"
+      echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx make_ndx -f "\$pdb_filename"_em.pdb -n "\$pdb_filename"_em.ndx -o "\$pdb_filename"_em.ndx
+
+      #export Protein+nucleotide/cation ONLY from minimization pdb output
+      echo -e 'Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx trjconv -f "\$pdb_filename"_em.pdb -s "\$pdb_filename"_em.tpr -n "\$pdb_filename"_em.ndx -o MINIMIZED1_SD_"\$pdb_filename".pdb -pbc whole
+      #center it and make it look good
+      echo -e 'Protein_'\$nucleotide'_'\$cation'_PO4\n Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx trjconv -f MINIMIZED1_SD_"\$pdb_filename".pdb -s "\$pdb_filename"_em.tpr -n "\$pdb_filename"_em.ndx -o "\$pdb_filename"_MINIMIZED_SD.pdb -center -pbc nojump
+
+      mv *_em* MINIMIZED/INITIAL_FILAMENT
+      mv *topol* MINIMIZED/INITIAL_FILAMENT
+      mv *posre* MINIMIZED/INITIAL_FILAMENT
+      mv *ions* MINIMIZED/INITIAL_FILAMENT
+      mv *.gro MINIMIZED/INITIAL_FILAMENT
+    elif [[ "\$nucleotide_state" == "ADP" ]]; then
+      gmx select -f "\$pdb_filename"_em.pdb -s "\$pdb_filename"_em.tpr -on "\$pdb_filename"_em.ndx -select "(group protein) or (resname ADP) or (resname MG)"
+      echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'\n q' | gmx make_ndx -f "\$pdb_filename"_em.pdb -n "\$pdb_filename"_em.ndx -o "\$pdb_filename"_em.ndx
+
+      #export Protein+nucleotide/cation ONLY from minimization pdb output
+      echo -e 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f "\$pdb_filename"_em.pdb -s "\$pdb_filename"_em.tpr -n "\$pdb_filename"_em.ndx -o MINIMIZED1_SD_"\$pdb_filename".pdb -pbc whole
+      #center it and make it look good
+      echo -e 'Protein_'\$nucleotide'_'\$cation'\n Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f MINIMIZED1_SD_"\$pdb_filename".pdb -s "\$pdb_filename"_em.tpr -n "\$pdb_filename"_em.ndx -o "\$pdb_filename"_MINIMIZED_SD.pdb -center -pbc nojump
+      mv *_em* MINIMIZED/INITIAL_FILAMENT
+      mv *topol* MINIMIZED/INITIAL_FILAMENT
+      mv *posre* MINIMIZED/INITIAL_FILAMENT
+      mv *ions* MINIMIZED/INITIAL_FILAMENT
+      mv *.gro MINIMIZED/INITIAL_FILAMENT
+    else
+      gmx select -f "\$pdb_filename"_em.pdb -s "\$pdb_filename"_em.tpr -on "\$pdb_filename"_em.ndx -select "(group protein) or (resname ATP) or (resname MG)"
+      echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'\n q' | gmx make_ndx -f "\$pdb_filename"_em.pdb -n "\$pdb_filename"_em.ndx -o "\$pdb_filename"_em.ndx
+
+       #export Protein+nucleotide/cation ONLY from minimization pdb output
+      echo -e 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f "\$pdb_filename"_em.pdb -s "\$pdb_filename"_em.tpr -n "\$pdb_filename"_em.ndx -o MINIMIZED1_SD_"\$pdb_filename".pdb -pbc whole
+      #center it and make it look good
+      echo -e 'Protein_'\$nucleotide'_'\$cation'\n Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f MINIMIZED1_SD_"\$pdb_filename".pdb -s "\$pdb_filename"_em.tpr -n "\$pdb_filename"_em.ndx -o "\$pdb_filename"_MINIMIZED_SD.pdb -center -pbc nojump
+      mv *_em* MINIMIZED/INITIAL_FILAMENT
+      mv *topol* MINIMIZED/INITIAL_FILAMENT
+      mv *posre* MINIMIZED/INITIAL_FILAMENT
+      mv *ions* MINIMIZED/INITIAL_FILAMENT
+      mv *.gro MINIMIZED/INITIAL_FILAMENT
+    fi
+
+    gmx pdb2gmx -f "\$pdb_filename"_MINIMIZED_SD.pdb -o "\$pdb_filename"_processed2.gro -p "\$pdb_filename"_topol2.top -i "\$pdb_filename"_posre2.itp -ff charmm36-jul2021 -water spce -ignh
+    gmx editconf -f "\$pdb_filename"_processed2.gro -o "\$pdb_filename"_newbox2.gro -c -d 1.0 -bt dodecahedron
+    gmx grompp -f "\$path_for_parameter_files"minim_cg1.mdp -c "\$pdb_filename"_newbox2.gro -p "\$pdb_filename"_topol2.top -o "\$pdb_filename"_em2.tpr -maxwarn 3
+    gmx mdrun -s "\$pdb_filename"_em2.tpr -deffnm "\$pdb_filename"_em2 -c "\$pdb_filename"_em2.pdb
+
+    #then when that's done, process the trajectory
+    if [[ "\$nucleotide_state" == "ADP-Pi" ]]; then
+      #use gmx select to create an index file with just the protein/nucleotide/cation. Do this because gmx make_ndx doesn't allow automated sleection of something if it's in multiple groups
+      #for example, 'ADP' is listed twice with make_ndx, so need to specify the NUMBER not "ADP" with make_ndx. Here, can specify the NAME.
+      gmx select -f "\$pdb_filename"_em2.pdb -s "\$pdb_filename"_em2.tpr -on "\$pdb_filename"_em2.ndx -select "(group protein) or (resname ADP) or (resname MG) or (resname PO4)"
+      echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx make_ndx -f "\$pdb_filename"_em2.pdb -n "\$pdb_filename"_em2.ndx -o "\$pdb_filename"_em2.ndx
+
+      #export Protein+nucleotide/cation ONLY from minimization pdb output
+      echo -e 'Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx trjconv -f "\$pdb_filename"_em2.pdb -s "\$pdb_filename"_em2.tpr -n "\$pdb_filename"_em2.ndx -o MINIMIZED1_"\$pdb_filename".pdb -pbc whole
+      #center it and make it look good
+      echo -e 'Protein_'\$nucleotide'_'\$cation'_PO4\n Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx trjconv -f MINIMIZED1_"\$pdb_filename".pdb -s "\$pdb_filename"_em2.tpr -n "\$pdb_filename"_em2.ndx -o "\$pdb_filename"_MINIMIZED.pdb -center -pbc nojump
+
+      mv *_em* MINIMIZED/INITIAL_FILAMENT
+      mv *topol* MINIMIZED/INITIAL_FILAMENT
+      mv *posre* MINIMIZED/INITIAL_FILAMENT
+      mv *ions* MINIMIZED/INITIAL_FILAMENT
+      mv *.gro MINIMIZED/INITIAL_FILAMENT
+    elif [[ "\$nucleotide_state" == "ADP" ]]; then
+      gmx select -f "\$pdb_filename"_em2.pdb -s "\$pdb_filename"_em2.tpr -on "\$pdb_filename"_em2.ndx -select "(group protein) or (resname ADP) or (resname MG)"
+      echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'\n q' | gmx make_ndx -f "\$pdb_filename"_em2.pdb -n "\$pdb_filename"_em2.ndx -o "\$pdb_filename"_em2.ndx
+
+      #export Protein+nucleotide/cation ONLY from minimization pdb output
+      echo -e 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f "\$pdb_filename"_em2.pdb -s "\$pdb_filename"_em2.tpr -n "\$pdb_filename"_em2.ndx -o MINIMIZED1_"\$pdb_filename".pdb -pbc whole
+      #center it and make it look good
+      echo -e 'Protein_'\$nucleotide'_'\$cation'\n Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f MINIMIZED1_"\$pdb_filename".pdb -s "\$pdb_filename"_em2.tpr -n "\$pdb_filename"_em2.ndx -o "\$pdb_filename"_MINIMIZED.pdb -center -pbc nojump
+      mv *_em* MINIMIZED/INITIAL_FILAMENT
+      mv *topol* MINIMIZED/INITIAL_FILAMENT
+      mv *posre* MINIMIZED/INITIAL_FILAMENT
+      mv *ions* MINIMIZED/INITIAL_FILAMENT
+      mv *.gro MINIMIZED/INITIAL_FILAMENT
+    else
+      gmx select -f "\$pdb_filename"_em2.pdb -s "\$pdb_filename"_em2.tpr -on "\$pdb_filename"_em2.ndx -select "(group protein) or (resname ATP) or (resname MG)"
+      echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'\n q' | gmx make_ndx -f "\$pdb_filename"_em2.pdb -n "\$pdb_filename"_em2.ndx -o "\$pdb_filename"_em2.ndx
+
+       #export Protein+nucleotide/cation ONLY from minimization pdb output
+      echo -e 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f "\$pdb_filename"_em2.pdb -s "\$pdb_filename"_em2.tpr -n "\$pdb_filename"_em2.ndx -o MINIMIZED1_"\$pdb_filename".pdb -pbc whole
+      #center it and make it look good
+      echo -e 'Protein_'\$nucleotide'_'\$cation'\n Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f MINIMIZED1_"\$pdb_filename".pdb -s "\$pdb_filename"_em2.tpr -n "\$pdb_filename"_em2.ndx -o "\$pdb_filename"_MINIMIZED.pdb -center -pbc nojump
+      mv *_em* MINIMIZED/INITIAL_FILAMENT
+      mv *topol* MINIMIZED/INITIAL_FILAMENT
+      mv *posre* MINIMIZED/INITIAL_FILAMENT
+      mv *ions* MINIMIZED/INITIAL_FILAMENT
+      mv *.gro MINIMIZED/INITIAL_FILAMENT
+    fi
+
+  #if the minimization DID converge, process trajectory like normal
+  else
+    if [[ "\$nucleotide_state" == "ADP-Pi" ]]; then
+      #use gmx select to create an index file with just the protein/nucleotide/cation. Do this because gmx make_ndx doesn't allow automated sleection of something if it's in multiple groups
+      #for example, 'ADP' is listed twice with make_ndx, so need to specify the NUMBER not "ADP" with make_ndx. Here, can specify the NAME.
+      gmx select -f "\$pdb_filename"_em.pdb -s "\$pdb_filename"_em.tpr -on "\$pdb_filename"_em.ndx -select "(group protein) or (resname ADP) or (resname MG) or (resname PO4)"
+      echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx make_ndx -f "\$pdb_filename"_em.pdb -n "\$pdb_filename"_em.ndx -o "\$pdb_filename"_em.ndx
+
+      #export Protein+nucleotide/cation ONLY from minimization pdb output
+      echo -e 'Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx trjconv -f "\$pdb_filename"_em.pdb -s "\$pdb_filename"_em.tpr -n "\$pdb_filename"_em.ndx -o MINIMIZED1_"\$pdb_filename".pdb -pbc whole
+      #center it and make it look good
+      echo -e 'Protein_'\$nucleotide'_'\$cation'_PO4\n Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx trjconv -f MINIMIZED1_"\$pdb_filename".pdb -s "\$pdb_filename"_em.tpr -n "\$pdb_filename"_em.ndx -o "\$pdb_filename"_MINIMIZED.pdb -center -pbc nojump
+
+      mv *_em* MINIMIZED/INITIAL_FILAMENT
+      mv *topol* MINIMIZED/INITIAL_FILAMENT
+      mv *posre* MINIMIZED/INITIAL_FILAMENT
+      mv *ions* MINIMIZED/INITIAL_FILAMENT
+      mv *.gro MINIMIZED/INITIAL_FILAMENT
+    elif [[ "\$nucleotide_state" == "ADP" ]]; then
+      gmx select -f "\$pdb_filename"_em.pdb -s "\$pdb_filename"_em.tpr -on "\$pdb_filename"_em.ndx -select "(group protein) or (resname ADP) or (resname MG)"
+      echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'\n q' | gmx make_ndx -f "\$pdb_filename"_em.pdb -n "\$pdb_filename"_em.ndx -o "\$pdb_filename"_em.ndx
+
+      #export Protein+nucleotide/cation ONLY from minimization pdb output
+      echo -e 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f "\$pdb_filename"_em.pdb -s "\$pdb_filename"_em.tpr -n "\$pdb_filename"_em.ndx -o MINIMIZED1_"\$pdb_filename".pdb -pbc whole
+      #center it and make it look good
+      echo -e 'Protein_'\$nucleotide'_'\$cation'\n Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f MINIMIZED1_"\$pdb_filename".pdb -s "\$pdb_filename"_em.tpr -n "\$pdb_filename"_em.ndx -o "\$pdb_filename"_MINIMIZED.pdb -center -pbc nojump
+      mv *_em* MINIMIZED/INITIAL_FILAMENT
+      mv *topol* MINIMIZED/INITIAL_FILAMENT
+      mv *posre* MINIMIZED/INITIAL_FILAMENT
+      mv *ions* MINIMIZED/INITIAL_FILAMENT
+      mv *.gro MINIMIZED/INITIAL_FILAMENT
+    else
+      gmx select -f "\$pdb_filename"_em.pdb -s "\$pdb_filename"_em.tpr -on "\$pdb_filename"_em.ndx -select "(group protein) or (resname ATP) or (resname MG)"
+      echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'\n q' | gmx make_ndx -f "\$pdb_filename"_em.pdb -n "\$pdb_filename"_em.ndx -o "\$pdb_filename"_em.ndx
+
+       #export Protein+nucleotide/cation ONLY from minimization pdb output
+      echo -e 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f "\$pdb_filename"_em.pdb -s "\$pdb_filename"_em.tpr -n "\$pdb_filename"_em.ndx -o MINIMIZED1_"\$pdb_filename".pdb -pbc whole
+      #center it and make it look good
+      echo -e 'Protein_'\$nucleotide'_'\$cation'\n Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f MINIMIZED1_"\$pdb_filename".pdb -s "\$pdb_filename"_em.tpr -n "\$pdb_filename"_em.ndx -o "\$pdb_filename"_MINIMIZED.pdb -center -pbc nojump
+      mv *_em* MINIMIZED/INITIAL_FILAMENT
+      mv *topol* MINIMIZED/INITIAL_FILAMENT
+      mv *posre* MINIMIZED/INITIAL_FILAMENT
+      mv *ions* MINIMIZED/INITIAL_FILAMENT
+      mv *.gro MINIMIZED/INITIAL_FILAMENT
+    fi
+  fi
+done
+
+
+#second, run script translating TPM over surface and move TPM away from actin by 5A
+python "\$path_for_structure_setup_scripts"tpm_translations.py "\$mutant" "\$Factin_or_Gactin" "\$nucleotide_state" "\$cation" "\$reference_structure" "\$path_for_reference_structure" "\$chains_to_delete" "\$tpm_chains" "\$output_path" "\$path_for_pymol_axes_script" "\$path_to_cluster_chain" "\$length_of_filament_to_build" "\$reference_starting_actin_chain"
+
+
+
+
+#create text files containing all minimization combinations
+for i in {1..5}; do
+  cluster_directory="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/\${mutant}/\${reference_structure}/cluster\${i}"
+  cd "\${cluster_directory}"
+  for a in \$(seq 5 -1 0); do
+    #set a loop for each TPM translation (not rotation) coordinate
+    min_angle=-35.00
+    max_angle=5.00
+    increment=1.25
+    for b in \$(seq -10.00 2.50 30.00); do
+      minimization_combinations="TPM_\${a}_combinations_\${b}A_allD.txt"
+      for c in \$(seq \$min_angle 2.50 \$max_angle); do
+        echo -e "\${b}\t\${c}" >> "\${minimization_combinations}"
+      done
+      min_angle=\$(echo "\$min_angle + \$increment" | bc)
+      max_angle=\$(echo "\$max_angle + \$increment" | bc)
+    done
+  done
+
+  for a in \$(seq 4.5 -1 0.5); do
+    #set a loop for each TPM translation (not rotation) coordinate
+    min_angle=-35.00
+    max_angle=5.00
+    increment=1.25
+    for b in \$(seq -10.00 2.50 30.00); do
+      minimization_combinations="TPM_\${a}_combinations_\${b}A_allD.txt"
+      for c in \$(seq \$min_angle 2.50 \$max_angle); do
+        echo -e "\${b}\t\${c}" >> "\${minimization_combinations}"
+      done
+      min_angle=\$(echo "\$min_angle + \$increment" | bc)
+      max_angle=\$(echo "\$max_angle + \$increment" | bc)
+    done
+  done
+done
+EOF
+)
+filament_minimization_script="1_BASE_FILAMENT_MINIMIZATION_${mutant}_${state}.sh"
+echo "$filament_minimization_script_content" > "$filament_minimization_script"
+
+
+
+
+######################################CREATE SUBMISSION SCRIPTS#################################################
+
+#variable i is just for numbering the script so that the user knows what order to submit them in
+i=2
+#variable x is for the NEXT TPM distance. This is used for calling the correct docking script
+x=4.5
+
+#using a loop, we will create scripts from the EOF block of text below, each one unique because of variables in loop
+#First loop will create scripts for the whole number TPM docking increments (5, 4, 3, 2, 1).
+for a in $(seq 5.0 -0.5 0.5); do
+submission_script_content=$(cat <<EOF
+#!/bin/bash
+
+#first, go to the directory where we will create all of our scripts
+cd "/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/${mutant}/${reference_structure}/"
+
+#Other papers have TPM translations -10A to +30A, azimuthal rotations -30D to +20D
+#Run scripts for each distance
+job1=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_-10.00A_allD.sh)           # Save the first job ID
+job2=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_-7.50A_allD.sh)
+job3=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_-5.00A_allD.sh)
+job4=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_-2.50A_allD.sh)
+job5=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_0.00A_allD.sh)
+job6=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_2.50A_allD.sh)
+job7=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_5.00A_allD.sh)
+job8=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_7.50A_allD.sh)
+job9=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_10.00A_allD.sh)
+job10=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_12.50A_allD.sh)
+job11=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_15.00A_allD.sh)
+job12=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_17.50A_allD.sh)
+job13=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_20.00A_allD.sh)
+job14=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_22.50A_allD.sh)
+job15=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_25.00A_allD.sh)
+job16=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_27.50A_allD.sh)
+job17=\$(sbatch --parsable MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_30.00A_allD.sh)
+
+#once all of the minimization scripts are done, run the docking script to move TPM 0.5A closer
+job18=\$(sbatch --dependency=afterok:\$job1:\$job2:\$job3:\$job4:\$job5:\$job6:\$job7:\$job8:\$job9:\$job10:\$job11:\$job12:\$job13:\$job14:\$job15:\$job16:\$job17 --parsable dock_to_${x}A.sh)   # Submit a job with a dependency to the first job
+
+EOF
+)
+#the end of the EOF block
+  #then, copy the text specified by the EOF block to the desired file
+  submission_script="${i}_${mutant}_landscape_script_submission_for_tpm_docking_${a}A.sh"
+  echo "$submission_script_content" > "$submission_script"
+  #update the file number by 2 (because we need to do this again for the 0.5 increments)
+  i=$((i + 1))
+  #Calculate the next x. Needs to be done this way because of decimals
+  x=$(echo "$x - 0.5" | bc)
+  x=$(printf "%.1f" $x)
+done
+
+
+#separately create a script for the 0A TPM docking increment,
+#This is separate because we don't need to include the line running python script to dock TPM further
+
+submission_script_content=$(cat <<EOF
+#!/bin/bash
+cd "/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/${mutant}/${reference_structure}/"
+
+#Other papers have TPM translations -10A to +30A, azimuthal rotations -30D to +20D
+job1=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_-10.00A_allD.sh)           # Save the first job ID
+job2=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_-7.50A_allD.sh)
+job3=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_-5.00A_allD.sh)
+job4=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_-2.50A_allD.sh)
+job5=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_0.00A_allD.sh)
+job6=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_2.50A_allD.sh)
+job7=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_5.00A_allD.sh)
+job8=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_7.50A_allD.sh)
+job9=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_10.00A_allD.sh)
+job10=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_12.50A_allD.sh)
+job11=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_15.00A_allD.sh)
+job12=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_17.50A_allD.sh)
+job13=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_20.00A_allD.sh)
+job14=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_22.50A_allD.sh)
+job15=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_25.00A_allD.sh)
+job16=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_27.50A_allD.sh)
+job17=\$(sbatch --parsable MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_30.00A_allD.sh)
+EOF
+)
+
+submission_script="12_${mutant}_landscape_script_submission_for_tpm_docking_0A.sh"
+echo "$submission_script_content" > "$submission_script"
+
+
+
+
+######################################CREATE MINIMIZATION SCRIPTS#################################################
+
+
+#Other papers have TPM translations -10A to +30A, azimuthal rotations -30D to +20D
+#set a loop to make individual minimization scripts for each docking distance
+for a in $(seq 5.0 -0.5 0.0); do
+  #set the angle range to be updated with each iteration of the translation loop
+  min_angle=-35.00
+  max_angle=5.00
+  increment=1.25
+  #set a loop for each TPM translation (not rotation) coordinate
+  for b in $(seq -10.00 2.50 30.00); do
+minimization_script_content=$(cat <<EOF
+#!/bin/bash
+#SBATCH --time=0-12:00:00  # D-HH:MM:SS
+#SBATCH --account=rrg-jfdawson
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=0  #mem per node
+#SBATCH --output=MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_${b}A_allD.out
+#SBATCH --job-name=MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_${b}A_allD
+#SBATCH --mail-user=ksteffen@uoguelph.ca
+#SBATCH --mail-type=FAIL
+#SBATCH --mail-type=ALL
+
+#set variables from the master script variables
+directory_path="$directory_path"
+mutant="$mutant"
+Factin_or_Gactin="$Factin_or_Gactin"
+reference_structure="$reference_structure"
+path_for_reference_structure="$path_for_reference_structure"
+chains_to_delete="$chains_to_delete"
+tpm_chains="$tpm_chains"
+#separate out translations by TPM state/reference structure
+output_path="$output_path"
+#location of script pymol_axes.py
+path_for_pymol_axes_script="$path_for_pymol_axes_script"
+#location of script rotation_axes.py
+path_for_rotation_axes_script="$path_for_rotation_axes_script"
+#path for tpm_translations.py AND tpm_docking.py
+path_for_structure_setup_scripts="$path_for_structure_setup_scripts"
+path_for_parameter_files="$path_for_parameter_files"
+#set as NEGATIVE the distance because the docking scripts will use the negative to move CLOSER to actin
+docking_increment=$docking_increment
+#the path where cluster structures were output from post_md analysis
+path_to_cluster_chain="$path_to_cluster_chain"
+#the total number of protomers in the filament (both strands combined)
+length_of_filament_to_build=$length_of_filament_to_build
+#Where does actin chain lettering start in reference structure? Used for building mutant filament
+reference_starting_actin_chain="$reference_starting_actin_chain"
+
+
+nucleotide_state="$nucleotide_state"
+cation="$cation"
+
+if [[ "\$nucleotide_state" == "ADP-Pi" ]]; then
+  nucleotide='ADP'
+elif [[ "\$nucleotide_state" == "ADP" ]]; then
+  nucleotide='ADP'
+else
+  nucleotide='ATP'
+fi
+
+
+#load modules
+module load StdEnv/2020 gcc/9.3.0 cuda/11.0 openmpi/4.0.3 gromacs/2021.2
+#set GROMACS to be our custom install
+export GMXLIB=/home/ksteffen/gromacs-2021.5/share/top
+export OMP_NUM_THREADS="\${SLURM_CPUS_PER_TASK:-1}"
+
+#fourth, run miniization on all '${a}A' structures
+for i in {1..5}; do
+  cluster_directory="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/\$mutant/\$reference_structure/cluster\$i"
+  cd "\$cluster_directory"
+  docking_distance=${a}
+  mkdir "\$cluster_directory"/MINIMIZED/"\$docking_distance"A
+  pdb_filename="DOCKING_\${docking_distance}A_\${mutant}_\${Factin_or_Gactin}"
+
+  mv "\$pdb_filename"*D.pdb "\$cluster_directory"/BASE_STRUCTURES
+
+  parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx pdb2gmx -f BASE_STRUCTURES/"\$pdb_filename"{1}A{2}D.pdb -o "\$pdb_filename"{1}A{2}D_processed.gro -p "\$pdb_filename"{1}A{2}D_topol.top -i "\$pdb_filename"{1}A{2}D_posre.itp -ff charmm36-jul2021 -water spce -ignh" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+  #define box around protein
+  parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx editconf -f "\$pdb_filename"{1}A{2}D_processed.gro -o "\$pdb_filename"{1}A{2}D_newbox.gro -c -d 1.0 -bt dodecahedron" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+  #send to gromacs preprocessor using new minimization parameter file
+  parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx grompp -f "\$path_for_parameter_files"minim_sd.mdp -c "\$pdb_filename"{1}A{2}D_newbox.gro -p "\$pdb_filename"{1}A{2}D_topol.top -o "\$pdb_filename"{1}A{2}D_em.tpr -maxwarn 3" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+  #-c flag outputs structure from the LAST step (aka minimized)
+  #set a loop for each TPM translation (not rotation) coordinate
+
+  for t in \$(seq $min_angle 2.50 $max_angle); do
+    gmx mdrun -s "\$pdb_filename"${b}A\${t}D_em.tpr -deffnm "\$pdb_filename"${b}A\${t}D_em -c "\$pdb_filename"${b}A\${t}D_em.pdb -ntomp \$SLURM_CPUS_PER_TASK
+  done
+done
+
+
+for i in {1..5}; do
+  cluster_directory="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/\$mutant/\$reference_structure/cluster\$i"
+  cd "\$cluster_directory"
+  docking_distance=${a}
+  pdb_filename="DOCKING_\${docking_distance}A_\${mutant}_\${Factin_or_Gactin}"
+
+  #convert em trajectory to pdb file for the next round of docking/minimization
+  #first, make an index for the protein AND the bound nucleotide/cation
+  if [[ "\$nucleotide_state" == "ADP-Pi" ]]; then
+    #use gmx select to create an index file with just the protein/nucleotide/cation. Do this because gmx make_ndx doesn't allow automated sleection of something if it's in multiple groups
+    #for example, 'ADP' is listed twice with make_ndx, so need to specify the NUMBER not "ADP" with make_ndx. Here, can specify the NAME.
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx select -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -on "\$pdb_filename"{1}A{2}D_em.ndx -select \"(group protein) or (resname ADP) or (resname MG) or (resname PO4)\"" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx make_ndx -f "\$pdb_filename"{1}A{2}D_em.pdb -n "\$pdb_filename"{1}A{2}D_em.ndx -o "\$pdb_filename"{1}A{2}D_em.ndx" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx trjconv -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED1_SD_"\$pdb_filename"{1}A{2}D.pdb -pbc whole" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+    #center it and make it look good
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'_PO4\n Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx trjconv -f MINIMIZED1_SD_"\$pdb_filename"{1}A{2}D.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED_SD_"\$pdb_filename"{1}A{2}D.pdb -center -pbc nojump" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+    #clean up the directory by moving all minimization files
+    mv MINIMIZED*_\${pdb_filename}*.pdb MINIMIZED/\${docking_distance}A
+    mv *_em* MINIMIZED/\${docking_distance}A
+    mv *topol* MINIMIZED/\${docking_distance}A
+    mv *posre* MINIMIZED/\${docking_distance}A
+    mv *ions* MINIMIZED/\${docking_distance}A
+    mv *.gro MINIMIZED/\${docking_distance}A
+  elif [[ "\$nucleotide_state" == "ADP" ]]; then
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx select -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -on "\$pdb_filename"{1}A{2}D_em.ndx -select \"(group protein) or (resname ADP) or (resname MG)\"" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'\n q' | gmx make_ndx -f "\$pdb_filename"{1}A{2}D_em.pdb -n "\$pdb_filename"{1}A{2}D_em.ndx -o "\$pdb_filename"{1}A{2}D_em.ndx" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED1_SD_"\$pdb_filename"{1}A{2}D.pdb -pbc whole" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+        #center it and make it look good
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f MINIMIZED1_SD_"\$pdb_filename"{1}A{2}D.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED_SD_"\$pdb_filename"{1}A{2}D.pdb -center -pbc nojump" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+    #clean up the directory by moving all minimization files
+    mv MINIMIZED*_\${pdb_filename}*.pdb MINIMIZED/\${docking_distance}A
+    mv *_em* MINIMIZED/\${docking_distance}A
+    mv *topol* MINIMIZED/\${docking_distance}A
+    mv *posre* MINIMIZED/\${docking_distance}A
+    mv *ions* MINIMIZED/\${docking_distance}A
+    mv *.gro MINIMIZED/\${docking_distance}A
+  else
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx select -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -on "\$pdb_filename"{1}A{2}D_em.ndx -select \"(group protein) or (resname ATP) or (resname MG)\"" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'\n q' | gmx make_ndx -f "\$pdb_filename"{1}A{2}D_em.pdb -n "\$pdb_filename"{1}A{2}D_em.ndx -o "\$pdb_filename"{1}A{2}D_em.ndx" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED1_SD_"\$pdb_filename"{1}A{2}D.pdb -pbc whole" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f MINIMIZED1_SD_"\$pdb_filename"{1}A{2}D.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED_SD_"\$pdb_filename"{1}A{2}D.pdb -center -pbc nojump" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+    mv MINIMIZED*_\${pdb_filename}*.pdb MINIMIZED/\${docking_distance}A
+    mv *_em* MINIMIZED/\${docking_distance}A
+    mv *topol* MINIMIZED/\${docking_distance}A
+    mv *posre* MINIMIZED/\${docking_distance}A
+    mv *ions* MINIMIZED/\${docking_distance}A
+    mv *.gro MINIMIZED/\${docking_distance}A
+  fi
+done
+
+
+#NOW MINIMIZE WITH CONJUGATE GRADIENT
+
+for i in {1..5}; do
+  cluster_directory="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/\$mutant/\$reference_structure/cluster\$i"
+  cd "\$cluster_directory"
+  docking_distance=${a}
+  mkdir "\$cluster_directory"/MINIMIZED/"\$docking_distance"A
+  pdb_filename="DOCKING_\${docking_distance}A_\${mutant}_\${Factin_or_Gactin}"
+
+  mv "\$pdb_filename"*D.pdb "\$cluster_directory"/BASE_STRUCTURES
+
+  parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx pdb2gmx -f MINIMIZED/"\$docking_distance"A/MINIMIZED_SD_"\$pdb_filename"{1}A{2}D.pdb -o "\$pdb_filename"{1}A{2}D_processed2.gro -p "\$pdb_filename"{1}A{2}D_topol2.top -i "\$pdb_filename"{1}A{2}D_posre2.itp -ff charmm36-jul2021 -water spce -ignh" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+  #define box around protein
+  parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx editconf -f "\$pdb_filename"{1}A{2}D_processed2.gro -o "\$pdb_filename"{1}A{2}D_newbox2.gro -c -d 1.0 -bt dodecahedron" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+  #send to gromacs preprocessor using new minimization parameter file
+  parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx grompp -f "\$path_for_parameter_files"minim_cg.mdp -c "\$pdb_filename"{1}A{2}D_newbox2.gro -p "\$pdb_filename"{1}A{2}D_topol2.top -o "\$pdb_filename"{1}A{2}D_em2.tpr -maxwarn 3" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+  #-c flag outputs structure from the LAST step (aka minimized)
+  #set a loop for each TPM translation (not rotation) coordinate
+
+  for t in \$(seq $min_angle 2.50 $max_angle); do
+    gmx mdrun -s "\$pdb_filename"${b}A\${t}D_em2.tpr -deffnm "\$pdb_filename"${b}A\${t}D_em2 -c "\$pdb_filename"${b}A\${t}D_em2.pdb -ntomp \$SLURM_CPUS_PER_TASK
+  done
+done
+
+
+for i in {1..5}; do
+  cluster_directory="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/\$mutant/\$reference_structure/cluster\$i"
+  cd "\$cluster_directory"
+  docking_distance=${a}
+  pdb_filename="DOCKING_\${docking_distance}A_\${mutant}_\${Factin_or_Gactin}"
+
+  #convert em trajectory to pdb file for the next round of docking/minimization
+  #first, make an index for the protein AND the bound nucleotide/cation
+  if [[ "\$nucleotide_state" == "ADP-Pi" ]]; then
+    #use gmx select to create an index file with just the protein/nucleotide/cation. Do this because gmx make_ndx doesn't allow automated sleection of something if it's in multiple groups
+    #for example, 'ADP' is listed twice with make_ndx, so need to specify the NUMBER not "ADP" with make_ndx. Here, can specify the NAME.
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx select -f "\$pdb_filename"{1}A{2}D_em2.pdb -s "\$pdb_filename"{1}A{2}D_em2.tpr -on "\$pdb_filename"{1}A{2}D_em2.ndx -select \"(group protein) or (resname ADP) or (resname MG) or (resname PO4)\"" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx make_ndx -f "\$pdb_filename"{1}A{2}D_em2.pdb -n "\$pdb_filename"{1}A{2}D_em2.ndx -o "\$pdb_filename"{1}A{2}D_em2.ndx" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx trjconv -f "\$pdb_filename"{1}A{2}D_em2.pdb -s "\$pdb_filename"{1}A{2}D_em2.tpr -n "\$pdb_filename"{1}A{2}D_em2.ndx -o MINIMIZED1_CG_"\$pdb_filename"{1}A{2}D.pdb -pbc whole" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+    #center it and make it look good
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'_PO4\n Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx trjconv -f MINIMIZED1_CG_"\$pdb_filename"{1}A{2}D.pdb -s "\$pdb_filename"{1}A{2}D_em2.tpr -n "\$pdb_filename"{1}A{2}D_em2.ndx -o MINIMIZED_"\$pdb_filename"{1}A{2}D.pdb -center -pbc nojump" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+    #clean up the directory by moving all minimization files
+    mv MINIMIZED*_\${pdb_filename}*.pdb MINIMIZED/\${docking_distance}A
+    mv *_em* MINIMIZED/\${docking_distance}A
+    mv *topol* MINIMIZED/\${docking_distance}A
+    mv *posre* MINIMIZED/\${docking_distance}A
+    mv *ions* MINIMIZED/\${docking_distance}A
+    mv *.gro MINIMIZED/\${docking_distance}A
+  elif [[ "\$nucleotide_state" == "ADP" ]]; then
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx select -f "\$pdb_filename"{1}A{2}D_em2.pdb -s "\$pdb_filename"{1}A{2}D_em2.tpr -on "\$pdb_filename"{1}A{2}D_em2.ndx -select \"(group protein) or (resname ADP) or (resname MG)\"" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'\n q' | gmx make_ndx -f "\$pdb_filename"{1}A{2}D_em2.pdb -n "\$pdb_filename"{1}A{2}D_em2.ndx -o "\$pdb_filename"{1}A{2}D_em2.ndx" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f "\$pdb_filename"{1}A{2}D_em2.pdb -s "\$pdb_filename"{1}A{2}D_em2.tpr -n "\$pdb_filename"{1}A{2}D_em2.ndx -o MINIMIZED1_CG_"\$pdb_filename"{1}A{2}D.pdb -pbc whole" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+    #center it and make it look good
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f MINIMIZED1_CG_"\$pdb_filename"{1}A{2}D.pdb -s "\$pdb_filename"{1}A{2}D_em2.tpr -n "\$pdb_filename"{1}A{2}D_em2.ndx -o MINIMIZED_"\$pdb_filename"{1}A{2}D.pdb -center -pbc nojump" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+    #clean up the directory by moving all minimization files
+    mv MINIMIZED*_\${pdb_filename}*.pdb MINIMIZED/\${docking_distance}A
+    mv *_em* MINIMIZED/\${docking_distance}A
+    mv *topol* MINIMIZED/\${docking_distance}A
+    mv *posre* MINIMIZED/\${docking_distance}A
+    mv *ions* MINIMIZED/\${docking_distance}A
+    mv *.gro MINIMIZED/\${docking_distance}A
+  else
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx select -f "\$pdb_filename"{1}A{2}D_em2.pdb -s "\$pdb_filename"{1}A{2}D_em2.tpr -on "\$pdb_filename"{1}A{2}D_em2.ndx -select \"(group protein) or (resname ATP) or (resname MG)\"" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'\n q' | gmx make_ndx -f "\$pdb_filename"{1}A{2}D_em2.pdb -n "\$pdb_filename"{1}A{2}D_em2.ndx -o "\$pdb_filename"{1}A{2}D_em2.ndx" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f "\$pdb_filename"{1}A{2}D_em2.pdb -s "\$pdb_filename"{1}A{2}D_em2.tpr -n "\$pdb_filename"{1}A{2}D_em2.ndx -o MINIMIZED1_CG_"\$pdb_filename"{1}A{2}D.pdb -pbc whole" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+    #center it and make it look good
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f MINIMIZED1_CG_"\$pdb_filename"{1}A{2}D.pdb -s "\$pdb_filename"{1}A{2}D_em2.tpr -n "\$pdb_filename"{1}A{2}D_em2.ndx -o MINIMIZED_"\$pdb_filename"{1}A{2}D.pdb -center -pbc nojump" :::: ./TPM_${a}_combinations_${b}A_allD.txt
+
+    mv MINIMIZED*_\${pdb_filename}*.pdb MINIMIZED/\${docking_distance}A
+    mv *_em* MINIMIZED/\${docking_distance}A
+    mv *topol* MINIMIZED/\${docking_distance}A
+    mv *posre* MINIMIZED/\${docking_distance}A
+    mv *ions* MINIMIZED/\${docking_distance}A
+    mv *.gro MINIMIZED/\${docking_distance}A
+  fi
+done
+
+EOF
+)
+    minimization_script="MINIMIZATION_DOCKING_${a}A_${mutant}_${reference_structure}_${b}A_allD.sh"
+    echo "$minimization_script_content" > "$minimization_script"
+    min_angle=$(echo "$min_angle + $increment" | bc)
+    max_angle=$(echo "$max_angle + $increment" | bc)
+  done
+done
+
+
+#run solvated minimization for 0A docking
+#set a loop for each TPM translation (not rotation) coordinate
+#set the angle range to be updated with each iteration of the translation loop
+min_angle=-35.00
+max_angle=5.00
+increment=1.25
+for b in $(seq -10.00 2.50 30.00); do
+minimization_script_content=$(cat <<EOF
+#!/bin/bash
+#SBATCH --time=1-00:00:00  # D-HH:MM:SS
+#SBATCH --account=rrg-jfdawson
+#SBATCH --nodes=4
+#SBATCH --ntasks-per-node=8
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=0  #mem per node
+#SBATCH --output=FINAL_MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_${b}A_allD.out
+#SBATCH --job-name=FINAL_MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_${b}A_allD
+#SBATCH --mail-user=ksteffen@uoguelph.ca
+#SBATCH --mail-type=FAIL
+#SBATCH --mail-type=ALL
+
+
+#load modules
+module load StdEnv/2020 gcc/9.3.0 cuda/11.0 openmpi/4.0.3 gromacs/2021.2
+#set GROMACS to be our custom install
+export GMXLIB=/home/ksteffen/gromacs-2021.5/share/top
+export OMP_NUM_THREADS="\${SLURM_CPUS_PER_TASK:-1}"
+
+
+#directory path is the path to folder containing all of your mutants if grouped together
+directory_path="$directory_path"
+mutant="$mutant"
+Factin_or_Gactin="$Factin_or_Gactin"
+reference_structure="$reference_structure"
+path_for_reference_structure="$path_for_reference_structure"
+chains_to_delete="$chains_to_delete"
+tpm_chains="$tpm_chains"
+#separate out translations by TPM state/reference structure
+output_path="$output_path"
+#location of script pymol_axes.py
+path_for_pymol_axes_script="$path_for_pymol_axes_script"
+#location of script rotation_axes.py
+path_for_rotation_axes_script="$path_for_rotation_axes_script"
+#path for tpm_translations.py AND tpm_docking.py
+path_for_structure_setup_scripts="$path_for_structure_setup_scripts"
+path_for_parameter_files="$path_for_parameter_files"
+#set as NEGATIVE the distance because the docking scripts will use the negative to move CLOSER to actin
+docking_increment=$docking_increment
+#the path where cluster structures were output from post_md analysis
+path_to_cluster_chain="$path_to_cluster_chain"
+#the total number of protomers in the filament (both strands combined)
+length_of_filament_to_build=$length_of_filament_to_build
+#Where does actin chain lettering start in reference structure? Used for building mutant filament
+reference_starting_actin_chain="$reference_starting_actin_chain"
+
+
+nucleotide_state="$nucleotide_state"
+cation="$cation"
+
+#####################################################MANUAL ENTRY#####################################################
+
+if [[ "\$nucleotide_state" == "ADP-Pi" ]]; then
+  nucleotide='ADP'
+elif [[ "\$nucleotide_state" == "ADP" ]]; then
+  nucleotide='ADP'
+else
+  nucleotide='ATP'
+fi
+
+for i in {1..5}; do
+  cluster_directory="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/\$mutant/\$reference_structure/cluster\$i"
+  cd "\$cluster_directory"
+  pdb_filename="DOCKING_0A_\${mutant}_\${Factin_or_Gactin}"
+
+#convert em trajectory to pdb file for the next round of docking/minimization
+  #first, make an index for the protein AND the bound nucleotide/cation
+  if [[ "\$nucleotide_state" == "ADP-Pi" ]]; then
+    #use gmx select to create an index file with just the protein/nucleotide/cation. Do this because gmx make_ndx doesn't allow automated sleection of something if it's in multiple groups
+    #for example, 'ADP' is listed twice with make_ndx, so need to specify the NUMBER not "ADP" with make_ndx. Here, can specify the NAME.
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx select -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -on "\$pdb_filename"{1}A{2}D_em.ndx -select \"(group protein) or (resname ADP) or (resname MG) or (resname PO4)\"" :::: ./TPM_0_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx make_ndx -f "\$pdb_filename"{1}A{2}D_em.pdb -n "\$pdb_filename"{1}A{2}D_em.ndx -o "\$pdb_filename"{1}A{2}D_em.ndx" :::: ./TPM_0_combinations_${b}A_allD.txt
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx trjconv -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED1_"\$pdb_filename"{1}A{2}D.pdb -pbc whole" :::: ./TPM_0_combinations_${b}A_allD.txt
+    #center it and make it look good
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'_PO4\n Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx trjconv -f MINIMIZED1_"\$pdb_filename"{1}A{2}D.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED_"\$pdb_filename"{1}A{2}D.pdb -center -pbc nojump" :::: ./TPM_0_combinations_${b}A_allD.txt
+
+    #clean up the directory by moving all minimization files
+    mv *\${pdb_filename}* MINIMIZED/0A
+
+  elif [[ "\$nucleotide_state" == "ADP" ]]; then
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx select -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -on "\$pdb_filename"{1}A{2}D_em.ndx -select "(group protein) or (resname ADP) or (resname MG)"" :::: ./TPM_0_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'\n q' | gmx make_ndx -f "\$pdb_filename"{1}A{2}D_em.pdb -n "\$pdb_filename"{1}A{2}D_em.ndx -o "\$pdb_filename"{1}A{2}D_em.ndx" :::: ./TPM_0_combinations_${b}A_allD.txt
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED1_"\$pdb_filename"{1}A{2}D.pdb -pbc whole" :::: ./TPM_0_combinations_${b}A_allD.txt
+        #center it and make it look good
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f MINIMIZED1_"\$pdb_filename"{1}A{2}D.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED_"\$pdb_filename"{1}A{2}D.pdb -center -pbc nojump" :::: ./TPM_0_combinations_${b}A_allD.txt
+
+    #clean up the directory by moving all minimization files
+    mv *\${pdb_filename}* MINIMIZED/0A
+
+  else
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx select -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -on "\$pdb_filename"{1}A{2}D_em.ndx -select "(group protein) or (resname ATP) or (resname MG)"" :::: ./TPM_0_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'\n q' | gmx make_ndx -f "\$pdb_filename"{1}A{2}D_em.pdb -n "\$pdb_filename"{1}A{2}D_em.ndx -o "\$pdb_filename"{1}A{2}D_em.ndx" :::: ./TPM_0_combinations_${b}A_allD.txt
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED1_"\$pdb_filename"{1}A{2}D.pdb -pbc whole" :::: ./TPM_0_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f MINIMIZED1_"\$pdb_filename"{1}A{2}D.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED_"\$pdb_filename"{1}A{2}D.pdb -center -pbc nojump" :::: ./TPM_0_combinations_${b}A_allD.txt
+    mv *\${pdb_filename}* MINIMIZED/0A
+
+  fi
+done
+
+
+#steepest descent minimization
+for i in {1..5}; do
+  cluster_directory="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/\$mutant/\$reference_structure/cluster\$i"
+  cd "\$cluster_directory"
+  mkdir FINAL_MINIMIZATION
+  docking_distance=0
+  pdb_filename="MINIMIZED_DOCKING_0A_\${mutant}_\${Factin_or_Gactin}"
+  pdb_filename2="SOLVATED_SD_DOCKING_0A_\${mutant}_\${Factin_or_Gactin}"
+
+  parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx pdb2gmx -f MINIMIZED/0A/"\$pdb_filename"{1}A{2}D.pdb -o "\$pdb_filename2"{1}A{2}D_processed.gro -p "\$pdb_filename2"{1}A{2}D_topol.top -i "\$pdb_filename2"{1}A{2}D_posre.itp -ff charmm36-jul2021 -water tip3p -ignh" :::: ./TPM_0_combinations_${b}A_allD.txt
+  #define box around protein
+  parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx editconf -f "\$pdb_filename2"{1}A{2}D_processed.gro -o "\$pdb_filename2"{1}A{2}D_newbox.gro -c -d 1.0 -bt dodecahedron" :::: ./TPM_0_combinations_${b}A_allD.txt
+  parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx solvate -cp "\$pdb_filename2"{1}A{2}D_newbox.gro -cs spc216.gro -o "\$pdb_filename2"{1}A{2}D_solv.gro -p "\$pdb_filename2"{1}A{2}D_topol.top" :::: ./TPM_0_combinations_${b}A_allD.txt
+  parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx grompp -f ions_sd.mdp -c "\$pdb_filename2"{1}A{2}D_solv.gro -p "\$pdb_filename2"{1}A{2}D_topol.top -o "\$pdb_filename2"{1}A{2}D_ions.tpr -maxwarn 3" :::: ./TPM_0_combinations_${b}A_allD.txt
+  parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo SOL | gmx genion -s "\$pdb_filename2"{1}A{2}D_ions.tpr -o "\$pdb_filename2"{1}A{2}D_ions.gro -p "\$pdb_filename2"{1}A{2}D_topol.top -pname NA -nname CL -neutral -conc 0.15" :::: ./TPM_0_combinations_${b}A_allD.txt
+
+  #send to gromacs preprocessor using new minimization parameter file
+  parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx grompp -f "\$path_for_parameter_files"minim_sd.mdp -c "\$pdb_filename2"{1}A{2}D_ions.gro -p "\$pdb_filename2"{1}A{2}D_topol.top -o "\$pdb_filename2"{1}A{2}D_em.tpr -maxwarn 3" :::: ./TPM_0_combinations_${b}A_allD.txt
+  #-c flag outputs structure from the LAST step (aka minimized)
+  for t in \$(seq $min_angle 2.50 $max_angle); do
+    gmx mdrun -s "\$pdb_filename2"${b}A\${t}D_em.tpr -deffnm "\$pdb_filename2"${b}A\${t}D_em -c "\$pdb_filename2"${b}A\${t}D_em.pdb -ntomp \$SLURM_CPUS_PER_TASK
+  done
+done
+
+
+for i in {1..5}; do
+  cluster_directory="/home/ksteffen/scratch/MUTANT_FILAMENTS/LANDSCAPES/\$mutant/\$reference_structure/cluster\$i"
+  cd "\$cluster_directory"
+  pdb_filename="SOLVATED_SD_DOCKING_0A_\${mutant}_\${Factin_or_Gactin}"
+
+#convert em trajectory to pdb file for the next round of docking/minimization
+  #first, make an index for the protein AND the bound nucleotide/cation
+  if [[ "\$nucleotide_state" == "ADP-Pi" ]]; then
+    #use gmx select to create an index file with just the protein/nucleotide/cation. Do this because gmx make_ndx doesn't allow automated sleection of something if it's in multiple groups
+    #for example, 'ADP' is listed twice with make_ndx, so need to specify the NUMBER not "ADP" with make_ndx. Here, can specify the NAME.
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx select -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -on "\$pdb_filename"{1}A{2}D_em.ndx -select \"(group protein) or (resname ADP) or (resname MG) or (resname PO4)\"" :::: ./TPM_0_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx make_ndx -f "\$pdb_filename"{1}A{2}D_em.pdb -n "\$pdb_filename"{1}A{2}D_em.ndx -o "\$pdb_filename"{1}A{2}D_em.ndx" :::: ./TPM_0_combinations_${b}A_allD.txt
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx trjconv -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED1_"\$pdb_filename"{1}A{2}D.pdb -pbc whole" :::: ./TPM_0_combinations_${b}A_allD.txt
+    #center it and make it look good
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'_PO4\n Protein_'\$nucleotide'_'\$cation'_PO4\n q' | gmx trjconv -f MINIMIZED1_"\$pdb_filename"{1}A{2}D.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED_"\$pdb_filename"{1}A{2}D.pdb -center -pbc nojump" :::: ./TPM_0_combinations_${b}A_allD.txt
+
+    #clean up the directory by moving all minimization files
+    mv *\${pdb_filename}* FINAL_MINIMIZATION
+
+  elif [[ "\$nucleotide_state" == "ADP" ]]; then
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx select -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -on "\$pdb_filename"{1}A{2}D_em.ndx -select "(group protein) or (resname ADP) or (resname MG)"" :::: ./TPM_0_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'\n q' | gmx make_ndx -f "\$pdb_filename"{1}A{2}D_em.pdb -n "\$pdb_filename"{1}A{2}D_em.ndx -o "\$pdb_filename"{1}A{2}D_em.ndx" :::: ./TPM_0_combinations_${b}A_allD.txt
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED1_"\$pdb_filename"{1}A{2}D.pdb -pbc whole" :::: ./TPM_0_combinations_${b}A_allD.txt
+        #center it and make it look good
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f MINIMIZED1_"\$pdb_filename"{1}A{2}D.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED_"\$pdb_filename"{1}A{2}D.pdb -center -pbc nojump" :::: ./TPM_0_combinations_${b}A_allD.txt
+
+    #clean up the directory by moving all minimization files
+    mv *\${pdb_filename}* FINAL_MINIMIZATION
+  else
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "gmx select -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -on "\$pdb_filename"{1}A{2}D_em.ndx -select "(group protein) or (resname ATP) or (resname MG)"" :::: ./TPM_0_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'name 0 Protein_'\$nucleotide'_'\$cation'\n q' | gmx make_ndx -f "\$pdb_filename"{1}A{2}D_em.pdb -n "\$pdb_filename"{1}A{2}D_em.ndx -o "\$pdb_filename"{1}A{2}D_em.ndx" :::: ./TPM_0_combinations_${b}A_allD.txt
+
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f "\$pdb_filename"{1}A{2}D_em.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED1_"\$pdb_filename"{1}A{2}D.pdb -pbc whole" :::: ./TPM_0_combinations_${b}A_allD.txt
+    parallel -j \$SLURM_CPUS_PER_TASK --colsep '\t' "echo -e 'Protein_'\$nucleotide'_'\$cation'\n 'Protein_'\$nucleotide'_'\$cation'\n q' | gmx trjconv -f MINIMIZED1_"\$pdb_filename"{1}A{2}D.pdb -s "\$pdb_filename"{1}A{2}D_em.tpr -n "\$pdb_filename"{1}A{2}D_em.ndx -o MINIMIZED_"\$pdb_filename"{1}A{2}D.pdb -center -pbc nojump" :::: ./TPM_0_combinations_${b}A_allD.txt
+    mv *\${pdb_filename}* FINAL_MINIMIZATION
+  fi
+done
+
+EOF
+)
+  minimization_script="SOLVATED_MINIMIZATION_DOCKING_0A_${mutant}_${reference_structure}_${b}A_allD.sh"
+  echo "$minimization_script_content" > "$minimization_script"
+  min_angle=$(echo "$min_angle + $increment" | bc)
+  max_angle=$(echo "$max_angle + $increment" | bc)
+done
+
+
+
+
+
+
+
+
+######################################CREATE DOCKING SCRIPTS#################################################
+
+
+
+
+
+
+#make scripts to run docking increments in python
+
+#variable x is the NEXT TPM distance (remembering it goes in 0.5A increments)
+#For example, our loop starts with 5A, x is 4.5A
+x=4.5
+#set a loop for the docking increment
+for a in $(seq 5.0 -0.5 0.5); do
+docking_script_content=$(cat <<EOF
+#!/bin/bash
+#SBATCH --time=0-01:00:00  # D-HH:MM:SS
+#SBATCH --account=rrg-jfdawson
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=0  #mem per node
+#SBATCH --output=tpm_docking_to_${x}A.out
+#SBATCH --job-name=tpm_docking_to_${x}A
+#SBATCH --mail-user=ksteffen@uoguelph.ca
+#SBATCH --mail-type=FAIL
+#SBATCH --mail-type=ALL
+
+
+#load modules
+module load StdEnv/2020 gcc/9.3.0 cuda/11.0 openmpi/4.0.3 gromacs/2021.2 python/3.10
+#set GROMACS to be our custom install
+export GMXLIB=/home/ksteffen/gromacs-2021.5/share/top
+export OMP_NUM_THREADS="\${SLURM_CPUS_PER_TASK:-1}"
+
+#directory path is the path to folder containing all of your mutants if grouped together
+directory_path="$directory_path"
+mutant="$mutant"
+Factin_or_Gactin="$Factin_or_Gactin"
+reference_structure="$reference_structure"
+path_for_reference_structure="$path_for_reference_structure"
+chains_to_delete="$chains_to_delete"
+tpm_chains="$tpm_chains"
+#separate out translations by TPM state/reference structure
+output_path="$output_path"
+#location of script pymol_axes.py
+path_for_pymol_axes_script="$path_for_pymol_axes_script"
+#location of script rotation_axes.py
+path_for_rotation_axes_script="$path_for_rotation_axes_script"
+#path for tpm_translations.py AND tpm_docking.py
+path_for_structure_setup_scripts="$path_for_structure_setup_scripts"
+path_for_parameter_files="$path_for_parameter_files"
+#set as NEGATIVE the distance because the docking scripts will use the negative to move CLOSER to actin
+docking_increment=$docking_increment
+#the path where cluster structures were output from post_md analysis
+path_to_cluster_chain="$path_to_cluster_chain"
+#the total number of protomers in the filament (both strands combined)
+length_of_filament_to_build=$length_of_filament_to_build
+#Where does actin chain lettering start in reference structure? Used for building mutant filament
+reference_starting_actin_chain="$reference_starting_actin_chain"
+
+
+nucleotide_state="$nucleotide_state"
+cation="$cation"
+
+if [[ "\$nucleotide_state" == "ADP-Pi" ]]; then
+  nucleotide='ADP'
+elif [[ "\$nucleotide_state" == "ADP" ]]; then
+  nucleotide='ADP'
+else
+  nucleotide='ATP'
+fi
+
+
+#load pymol
+virtualenv --no-download $SLURM_TMPDIR/env
+source $SLURM_TMPDIR/env/bin/activate
+pip install pymol --no-index
+pip install numpy --no-index
+
+
+#run the python script to move it from the current distance (variable a) to the new distance (variable x)
+pymol "\$path_for_structure_setup_scripts"tpm_docking.py "\$mutant" "\$Factin_or_Gactin" "\$reference_structure" "\$path_for_reference_structure" "\$chains_to_delete" "\$tpm_chains" "\$output_path" "\$path_for_pymol_axes_script" "\$path_for_rotation_axes_script" ${a} ${x} "\$docking_increment" "\$reference_starting_actin_chain"
+
+EOF
+)
+  docking_script="dock_to_${x}A.sh"
+  echo "$docking_script_content" > "$docking_script"
+  x=$(echo "$x - 0.5" | bc)
+  x=$(printf "%.1f" $x)
+done
+
+
