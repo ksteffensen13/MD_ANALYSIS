@@ -1,0 +1,335 @@
+#!/bin/bash
+#SBATCH --time=0-12:00:00  # D-HH:MM:SS
+#SBATCH --account=def-jfdawson
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=0  #mem per node
+#SBATCH --output=troponin_FINAL_MINIMIZATION.out
+#SBATCH --job-name=troponin_FINAL_MINIMIZATION
+#SBATCH --mail-user=ksteffen@uoguelph.ca
+#SBATCH --mail-type=FAIL
+#SBATCH --mail-type=ALL
+
+#load modules
+module load  StdEnv/2023  gcc/12.3   openmpi/4.1.5  gromacs/2024.1 python/3.10
+#set GROMACS to be our custom install
+export GMXLIB=/home/ksteffen/gromacs-2021.5/share/top
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+
+
+protein='Tn'
+directory_path="/home/ksteffen/scratch/MUTANT_FILAMENTS/FOR_R312_PAPER/BINDING_ENERGIES"
+#location of script pymol_axes.py
+path_for_scripts="/home/ksteffen/scratch/MUTANT_FILAMENTS/FOR_R312_PAPER/BINDING_ENERGIES/scripts/"
+path_for_axes_scripts="/home/ksteffen/scratch/MUTANT_FILAMENTS/FOR_R312_PAPER/BINDING_ENERGIES/scripts/pymol_axes.py"
+path_for_parameter_files="/home/ksteffen/scratch/MUTANT_FILAMENTS/FOR_R312_PAPER/BINDING_ENERGIES/parameter_files/"
+
+state='BLOCKED'
+state2='blocked'
+mutants=("WT" "R312C" "R312H")
+
+initial_file_path=""$directory_path"/"$state"/"$protein"/"
+
+cd "$initial_file_path"
+
+for mutant in "${mutants[@]}"; do
+
+  path_for_output=""$initial_file_path"/MINIMIZATION_0A/"
+  cd "$path_for_output"
+
+  module purge
+  module load StdEnv/2023 gcc/12.3 openmpi/4.1.5 gromacs/2024.1
+  export GMXLIB=/home/ksteffen/gromacs-2021.5/share/top
+  for i in {1..5}; do
+    pdb_filename=DOCKING_0.0A_"$mutant""$i"_"$protein"_"$state2"
+    #export Protein+nucleotide/cation ONLY from minimization pdb output
+    echo -e 'Protein_ADP_MG_PO4\n q' | gmx trjconv -f "$pdb_filename"_em.pdb -s "$pdb_filename"_em.tpr -n "$pdb_filename"_em.ndx -o MINIMIZED1_SD_"$pdb_filename".pdb -pbc whole -nobackup
+    #center it and make it look good
+    echo -e 'Protein\n Protein\n q' | gmx trjconv -f MINIMIZED1_SD_"$pdb_filename".pdb -s "$pdb_filename"_em.tpr -o "$pdb_filename"_MINIMIZED_SD.pdb -center -pbc nojump -nobackup
+
+    gmx_d pdb2gmx -f "$pdb_filename"_MINIMIZED_SD.pdb -o "$pdb_filename"_processed_FINAL.gro -p "$pdb_filename"_topol_FINAL.top -i "$pdb_filename"_posre_FINAL.itp -ff charmm36-jul2021 -water tip3p -ignh
+    gmx_d editconf -f "$pdb_filename"_processed_FINAL.gro -o "$pdb_filename"_newbox_FINAL.gro -c -d 1.0 -bt dodecahedron
+    gmx_d grompp -f "$path_for_parameter_files"minim_FINAL.mdp -c "$pdb_filename"_newbox_FINAL.gro -p "$pdb_filename"_topol_FINAL.top -o "$pdb_filename"_em_FINAL.tpr -maxwarn 3
+    gmx_d mdrun -s "$pdb_filename"_em_FINAL.tpr -deffnm "$pdb_filename"_em_FINAL -c "$pdb_filename"_em_FINAL.pdb
+
+    if grep -q "the forces have not converged" "$pdb_filename"_em_FINAL.log; then
+      gmx_d pdb2gmx -f "$pdb_filename"_MINIMIZED_SD.pdb -o "$pdb_filename"_processed_FINAL.gro -p "$pdb_filename"_topol_FINAL.top -i "$pdb_filename"_posre_FINAL.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename"_processed_FINAL.gro -o "$pdb_filename"_newbox_FINAL.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"minim_cg.mdp -c "$pdb_filename"_newbox_FINAL.gro -p "$pdb_filename"_topol_FINAL.top -o "$pdb_filename"_em_FINAL.tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename"_em_FINAL.tpr -deffnm "$pdb_filename"_em_FINAL -c "$pdb_filename"_em_FINAL.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename"_em_FINAL.log; then
+      gmx_d pdb2gmx -f "$pdb_filename"_MINIMIZED_SD.pdb -o "$pdb_filename"_processed_FINAL.gro -p "$pdb_filename"_topol_FINAL.top -i "$pdb_filename"_posre_FINAL.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename"_processed_FINAL.gro -o "$pdb_filename"_newbox_FINAL.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"minim_cg.mdp -c "$pdb_filename"_newbox_FINAL.gro -p "$pdb_filename"_topol_FINAL.top -o "$pdb_filename"_em_FINAL.tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename"_em_FINAL.tpr -deffnm "$pdb_filename"_em_FINAL -c "$pdb_filename"_em_FINAL.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename"_em_FINAL.log; then
+      gmx_d pdb2gmx -f "$pdb_filename"_MINIMIZED_SD.pdb -o "$pdb_filename"_processed_FINAL.gro -p "$pdb_filename"_topol_FINAL.top -i "$pdb_filename"_posre_FINAL.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename"_processed_FINAL.gro -o "$pdb_filename"_newbox_FINAL.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"minim_cg.mdp -c "$pdb_filename"_newbox_FINAL.gro -p "$pdb_filename"_topol_FINAL.top -o "$pdb_filename"_em_FINAL.tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename"_em_FINAL.tpr -deffnm "$pdb_filename"_em_FINAL -c "$pdb_filename"_em_FINAL.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename"_em_FINAL.log; then
+      gmx_d pdb2gmx -f "$pdb_filename"_MINIMIZED_SD.pdb -o "$pdb_filename"_processed_FINAL.gro -p "$pdb_filename"_topol_FINAL.top -i "$pdb_filename"_posre_FINAL.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename"_processed_FINAL.gro -o "$pdb_filename"_newbox_FINAL.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"minim_cg.mdp -c "$pdb_filename"_newbox_FINAL.gro -p "$pdb_filename"_topol_FINAL.top -o "$pdb_filename"_em_FINAL.tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename"_em_FINAL.tpr -deffnm "$pdb_filename"_em_FINAL -c "$pdb_filename"_em_FINAL.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename"_em_FINAL.log; then
+      gmx_d pdb2gmx -f "$pdb_filename"_MINIMIZED_SD.pdb -o "$pdb_filename"_processed_FINAL.gro -p "$pdb_filename"_topol_FINAL.top -i "$pdb_filename"_posre_FINAL.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename"_processed_FINAL.gro -o "$pdb_filename"_newbox_FINAL.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"minim_cg.mdp -c "$pdb_filename"_newbox_FINAL.gro -p "$pdb_filename"_topol_FINAL.top -o "$pdb_filename"_em_FINAL.tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename"_em_FINAL.tpr -deffnm "$pdb_filename"_em_FINAL -c "$pdb_filename"_em_FINAL.pdb -nobackup
+    fi
+
+    echo -e 'Protein\n q' | gmx trjconv -f "$pdb_filename"_em_FINAL.pdb -s "$pdb_filename"_em_FINAL.tpr -o MINIMIZED1_SD_"$pdb_filename"_FINAL.pdb -pbc whole -nobackup
+    #center it and make it look good
+    echo -e 'Protein\n Protein\n q' | gmx trjconv -f MINIMIZED1_SD_"$pdb_filename"_FINAL.pdb -s "$pdb_filename"_em_FINAL.tpr -o "$pdb_filename"_MINIMIZED_FINAL.pdb -center -pbc nojump -nobackup
+
+  done
+done
+
+cd "$initial_file_path"
+
+cd MINIMIZATION_FINAL
+
+for mutant in "${mutants[@]}"; do
+  for i in {1..5}; do
+    pdb_filename="DOCKING_0.0A_"$mutant""$i"_"$protein"_"$state2""
+    pdb_filename1="DOCKING_0.0A_"$mutant""$i"_"$protein"_"$state2"_MINIMIZED_FINAL"
+    pdb_filename2="Actin_"$mutant""$i"_"$protein"_"$state2""
+    pdb_filename3="ChainsBDFH_"$mutant""$i"_"$protein"_"$state2""
+    pdb_filename4="ChainsBDFH_TnI_"$mutant""$i"_"$protein"_"$state2""
+    pdb_filename5="ChainsBD_Dloop_"$mutant""$i"_"$protein"_"$state2""
+    pdb_filename6="ChainsBD_Dloop_TnI_"$mutant""$i"_"$protein"_"$state2""
+
+
+
+    #create index groups
+    echo -e 'ri 9-3008\n name 10 Actin\n q' | gmx make_ndx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename1".ndx -nobackup
+    echo -e 'ri 384-758|ri 1134-1508|ri 1884-2258|ri 2634-3008\n name 11 ChainsBDFH\n q' | gmx make_ndx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename1".ndx -n "$pdb_filename1".ndx -nobackup
+    echo -e 'ri 422-437|ri 1172-1187\n name 12 ChainsBD_Dloop\n q' | gmx make_ndx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename1".ndx -n "$pdb_filename1".ndx -nobackup
+    echo -e 'ri 3025-3428\n name 13 Troponin\n q' | gmx make_ndx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename1".ndx -n "$pdb_filename1".ndx -nobackup
+    echo -e 'ri 3099-3268\n name 14 TroponinI\n q' | gmx make_ndx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename1".ndx -n "$pdb_filename1".ndx -nobackup
+
+
+    #run minimizations that allow calculation of energy between minimization groups
+    gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename2"_processed.gro -p "$pdb_filename2"_topol.top -i "$pdb_filename2"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+    gmx_d editconf -f "$pdb_filename2"_processed.gro -o "$pdb_filename2"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+    gmx_d grompp -f "$path_for_parameter_files"ACTIN_troponin.mdp -c "$pdb_filename2"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename2"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename2".tpr -maxwarn 3 -nobackup
+    gmx_d mdrun -s "$pdb_filename2".tpr -deffnm "$pdb_filename2"_em -c "$pdb_filename2"_em.pdb -nobackup
+
+    if grep -q "the forces have not converged" "$pdb_filename2"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename2"_processed.gro -p "$pdb_filename2"_topol.top -i "$pdb_filename2"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename2"_processed.gro -o "$pdb_filename2"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"ACTIN_troponin.mdp -c "$pdb_filename2"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename2"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename2".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename2".tpr -deffnm "$pdb_filename2"_em -c "$pdb_filename2"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename2"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename2"_processed.gro -p "$pdb_filename2"_topol.top -i "$pdb_filename2"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename2"_processed.gro -o "$pdb_filename2"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"ACTIN_troponin.mdp -c "$pdb_filename2"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename2"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename2".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename2".tpr -deffnm "$pdb_filename2"_em -c "$pdb_filename2"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename2"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename2"_processed.gro -p "$pdb_filename2"_topol.top -i "$pdb_filename2"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename2"_processed.gro -o "$pdb_filename2"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"ACTIN_troponin.mdp -c "$pdb_filename2"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename2"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename2".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename2".tpr -deffnm "$pdb_filename2"_em -c "$pdb_filename2"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename2"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename2"_processed.gro -p "$pdb_filename2"_topol.top -i "$pdb_filename2"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename2"_processed.gro -o "$pdb_filename2"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"ACTIN_troponin.mdp -c "$pdb_filename2"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename2"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename2".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename2".tpr -deffnm "$pdb_filename2"_em -c "$pdb_filename2"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename2"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename2"_processed.gro -p "$pdb_filename2"_topol.top -i "$pdb_filename2"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename2"_processed.gro -o "$pdb_filename2"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"ACTIN_troponin.mdp -c "$pdb_filename2"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename2"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename2".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename2".tpr -deffnm "$pdb_filename2"_em -c "$pdb_filename2"_em.pdb -nobackup
+    fi
+
+
+    gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename3"_processed.gro -p "$pdb_filename3"_topol.top -i "$pdb_filename3"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+    gmx_d editconf -f "$pdb_filename3"_processed.gro -o "$pdb_filename3"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+    gmx_d grompp -f "$path_for_parameter_files"CHAINSBDFH_troponin.mdp -c "$pdb_filename3"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename3"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename3".tpr -maxwarn 3 -nobackup
+    gmx_d mdrun -s "$pdb_filename3".tpr -deffnm "$pdb_filename3"_em -c "$pdb_filename3"_em.pdb -nobackup
+
+    if grep -q "the forces have not converged" "$pdb_filename3"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename3"_processed.gro -p "$pdb_filename3"_topol.top -i "$pdb_filename3"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename3"_processed.gro -o "$pdb_filename3"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBDFH_troponin.mdp -c "$pdb_filename3"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename3"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename3".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename3".tpr -deffnm "$pdb_filename3"_em -c "$pdb_filename3"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename3"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename3"_processed.gro -p "$pdb_filename3"_topol.top -i "$pdb_filename3"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename3"_processed.gro -o "$pdb_filename3"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBDFH_troponin.mdp -c "$pdb_filename3"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename3"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename3".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename3".tpr -deffnm "$pdb_filename3"_em -c "$pdb_filename3"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename3"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename3"_processed.gro -p "$pdb_filename3"_topol.top -i "$pdb_filename3"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename3"_processed.gro -o "$pdb_filename3"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBDFH_troponin.mdp -c "$pdb_filename3"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename3"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename3".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename3".tpr -deffnm "$pdb_filename3"_em -c "$pdb_filename3"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename3"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename3"_processed.gro -p "$pdb_filename3"_topol.top -i "$pdb_filename3"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename3"_processed.gro -o "$pdb_filename3"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBDFH_troponin.mdp -c "$pdb_filename3"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename3"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename3".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename3".tpr -deffnm "$pdb_filename3"_em -c "$pdb_filename3"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename3"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename3"_processed.gro -p "$pdb_filename3"_topol.top -i "$pdb_filename3"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename3"_processed.gro -o "$pdb_filename3"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBDFH_troponin.mdp -c "$pdb_filename3"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename3"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename3".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename3".tpr -deffnm "$pdb_filename3"_em -c "$pdb_filename3"_em.pdb -nobackup
+    fi
+
+
+
+
+    gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename4"_processed.gro -p "$pdb_filename4"_topol.top -i "$pdb_filename4"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+    gmx_d editconf -f "$pdb_filename4"_processed.gro -o "$pdb_filename4"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+    gmx_d grompp -f "$path_for_parameter_files"CHAINSBDFH_TnI.mdp -c "$pdb_filename4"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename4"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename4".tpr -maxwarn 3 -nobackup
+    gmx_d mdrun -s "$pdb_filename4".tpr -deffnm "$pdb_filename4"_em -c "$pdb_filename4"_em.pdb -nobackup
+
+    if grep -q "the forces have not converged" "$pdb_filename4"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename4"_processed.gro -p "$pdb_filename4"_topol.top -i "$pdb_filename4"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename4"_processed.gro -o "$pdb_filename4"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBDFH_TnI.mdp -c "$pdb_filename4"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename4"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename4".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename4".tpr -deffnm "$pdb_filename4"_em -c "$pdb_filename4"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename4"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename4"_processed.gro -p "$pdb_filename4"_topol.top -i "$pdb_filename4"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename4"_processed.gro -o "$pdb_filename4"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBDFH_TnI.mdp -c "$pdb_filename4"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename4"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename4".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename4".tpr -deffnm "$pdb_filename4"_em -c "$pdb_filename4"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename4"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename4"_processed.gro -p "$pdb_filename4"_topol.top -i "$pdb_filename4"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename4"_processed.gro -o "$pdb_filename4"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBDFH_TnI.mdp -c "$pdb_filename4"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename4"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename4".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename4".tpr -deffnm "$pdb_filename4"_em -c "$pdb_filename4"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename4"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename4"_processed.gro -p "$pdb_filename4"_topol.top -i "$pdb_filename4"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename4"_processed.gro -o "$pdb_filename4"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBDFH_TnI.mdp -c "$pdb_filename4"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename4"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename4".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename4".tpr -deffnm "$pdb_filename4"_em -c "$pdb_filename4"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename4"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename4"_processed.gro -p "$pdb_filename4"_topol.top -i "$pdb_filename4"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename4"_processed.gro -o "$pdb_filename4"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBDFH_TnI.mdp -c "$pdb_filename4"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename4"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename4".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename4".tpr -deffnm "$pdb_filename4"_em -c "$pdb_filename4"_em.pdb -nobackup
+    fi
+
+
+
+
+
+    gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename5"_processed.gro -p "$pdb_filename5"_topol.top -i "$pdb_filename5"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+    gmx_d editconf -f "$pdb_filename5"_processed.gro -o "$pdb_filename5"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+    gmx_d grompp -f "$path_for_parameter_files"CHAINSBD_DLOOP_troponin.mdp -c "$pdb_filename5"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename5"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename5".tpr -maxwarn 3 -nobackup
+    gmx_d mdrun -s "$pdb_filename5".tpr -deffnm "$pdb_filename5"_em -c "$pdb_filename5"_em.pdb -nobackup
+
+    if grep -q "the forces have not converged" "$pdb_filename5"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename5"_processed.gro -p "$pdb_filename5"_topol.top -i "$pdb_filename5"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename5"_processed.gro -o "$pdb_filename5"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBD_DLOOP_troponin.mdp -c "$pdb_filename5"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename5"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename5".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename5".tpr -deffnm "$pdb_filename5"_em -c "$pdb_filename5"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename5"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename5"_processed.gro -p "$pdb_filename5"_topol.top -i "$pdb_filename5"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename5"_processed.gro -o "$pdb_filename5"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBD_DLOOP_troponin.mdp -c "$pdb_filename5"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename5"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename5".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename5".tpr -deffnm "$pdb_filename5"_em -c "$pdb_filename5"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename5"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename5"_processed.gro -p "$pdb_filename5"_topol.top -i "$pdb_filename5"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename5"_processed.gro -o "$pdb_filename5"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBD_DLOOP_troponin.mdp -c "$pdb_filename5"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename5"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename5".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename5".tpr -deffnm "$pdb_filename5"_em -c "$pdb_filename5"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename5"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename5"_processed.gro -p "$pdb_filename5"_topol.top -i "$pdb_filename5"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename5"_processed.gro -o "$pdb_filename5"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBD_DLOOP_troponin.mdp -c "$pdb_filename5"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename5"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename5".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename5".tpr -deffnm "$pdb_filename5"_em -c "$pdb_filename5"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename5"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename5"_processed.gro -p "$pdb_filename5"_topol.top -i "$pdb_filename5"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename5"_processed.gro -o "$pdb_filename5"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBD_DLOOP_troponin.mdp -c "$pdb_filename5"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename5"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename5".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename5".tpr -deffnm "$pdb_filename5"_em -c "$pdb_filename5"_em.pdb -nobackup
+    fi
+
+
+
+
+    gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename6"_processed.gro -p "$pdb_filename6"_topol.top -i "$pdb_filename6"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+    gmx_d editconf -f "$pdb_filename6"_processed.gro -o "$pdb_filename6"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+    gmx_d grompp -f "$path_for_parameter_files"CHAINSBD_DLOOP_TnI.mdp -c "$pdb_filename6"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename6"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename6".tpr -maxwarn 3 -nobackup
+    gmx_d mdrun -s "$pdb_filename6".tpr -deffnm "$pdb_filename6"_em -c "$pdb_filename6"_em.pdb -nobackup
+
+    if grep -q "the forces have not converged" "$pdb_filename6"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename6"_processed.gro -p "$pdb_filename6"_topol.top -i "$pdb_filename6"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename6"_processed.gro -o "$pdb_filename6"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBD_DLOOP_TnI.mdp -c "$pdb_filename6"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename6"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename6".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename6".tpr -deffnm "$pdb_filename6"_em -c "$pdb_filename6"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename6"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename6"_processed.gro -p "$pdb_filename6"_topol.top -i "$pdb_filename6"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename6"_processed.gro -o "$pdb_filename6"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBD_DLOOP_TnI.mdp -c "$pdb_filename6"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename6"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename6".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename6".tpr -deffnm "$pdb_filename6"_em -c "$pdb_filename6"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename6"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename6"_processed.gro -p "$pdb_filename6"_topol.top -i "$pdb_filename6"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename6"_processed.gro -o "$pdb_filename6"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBD_DLOOP_TnI.mdp -c "$pdb_filename6"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename6"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename6".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename6".tpr -deffnm "$pdb_filename6"_em -c "$pdb_filename6"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename6"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename6"_processed.gro -p "$pdb_filename6"_topol.top -i "$pdb_filename6"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename6"_processed.gro -o "$pdb_filename6"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBD_DLOOP_TnI.mdp -c "$pdb_filename6"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename6"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename6".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename6".tpr -deffnm "$pdb_filename6"_em -c "$pdb_filename6"_em.pdb -nobackup
+    fi
+
+    if grep -q "the forces have not converged" "$pdb_filename6"_em.log; then
+      gmx_d pdb2gmx -f ../MINIMIZATION_0A/"$pdb_filename1".pdb -o "$pdb_filename6"_processed.gro -p "$pdb_filename6"_topol.top -i "$pdb_filename6"_posre.itp -ff charmm36-jul2021 -water tip3p -ignh -nobackup
+      gmx_d editconf -f "$pdb_filename6"_processed.gro -o "$pdb_filename6"_newbox.gro -c -d 1.0 -bt dodecahedron -nobackup
+      gmx_d grompp -f "$path_for_parameter_files"CHAINSBD_DLOOP_TnI.mdp -c "$pdb_filename6"_newbox.gro -t ../MINIMIZATION_0A/"$pdb_filename"_em_FINAL.trr -p "$pdb_filename6"_topol.top -n "$pdb_filename1".ndx -o "$pdb_filename6".tpr -maxwarn 3 -nobackup
+      gmx_d mdrun -s "$pdb_filename6".tpr -deffnm "$pdb_filename6"_em -c "$pdb_filename6"_em.pdb -nobackup
+    fi
+
+  done
+done
